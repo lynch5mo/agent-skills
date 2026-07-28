@@ -18,22 +18,21 @@
 
 ## 手机 Agent 安装
 
-在支持从私有 GitHub 仓库安装 Skills 的 Agent 中：
+在支持从 GitHub 仓库安装 Skills 的 Agent 中：
 
-1. 使用具有本仓库读取权限的 GitHub 身份登录。
-2. 添加仓库：
+1. 添加公开仓库：
 
 ```text
 https://github.com/lynch5mo/agent-skills
 ```
 
-3. 选择 Skill 路径：
+2. 选择 Skill 路径：
 
 ```text
 skills/agent-kb-workflow
 ```
 
-4. 确认安装后的 Skill 名称仍为：
+3. 确认安装后的 Skill 名称仍为：
 
 ```text
 agent-kb-workflow

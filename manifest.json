@@ -1,6 +1,6 @@
 {
   "repository": "lynch5mo/agent-skills",
-  "visibility": "private",
+  "visibility": "public",
   "skills": [
     {
       "name": "agent-kb-workflow",
