@@ -70,6 +70,8 @@ Hermes: ~/.hermes/profiles/codex/skills/agent-kb-workflow
 
 从 v1.2.0 开始，课程与书籍的用户投料真源固定在 NAS 主库的 `raw/courses/` 与 `raw/books/`。本机 Agent-KB repo 仅作为 Agent 编译工作副本，不再作为用户投料入口。
 
+从 v1.3.0 开始，一门课程或一本书的问答、分析、导图和扩展阅读正文也只保存在同一个 NAS 对象的 `artifacts/`。Git 仅保留路径与哈希索引，不再保存第二份对象产物正文。
+
 ## 版本
 
 当前版本见根目录 `manifest.json` 和 Skill 的 `SKILL.md` frontmatter。

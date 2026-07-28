@@ -26,12 +26,13 @@
 3. 读取 `schema/learning_collections_contract.md`。
 4. 通过 NAS 主库清点课程或书籍对象目录；NAS browse 工作区只按对象读取，不执行全库 pull、reset、clean 或覆盖。
 5. 从 `ops/data/learning/items.csv` 定位 `collection_id`。
-6. 读取对象的 `course.yaml|book.yaml`。
+6. 读取对象的 `README.md` 与 `course.yaml|book.yaml`。
 7. 读取 `_prepared/manifest.yaml`；不存在时先做材料清点。
-8. 读取 `ops/data/learning/progress/<collection_id>.yaml`；不存在时从模板建立。
-9. 读取 collection map、相关 domain summary 和必要 raw source。
+8. 读取 NAS 对象的 `artifacts/manifest.yaml` 与 Git `ops/data/learning/artifacts/<collection_id>.yaml`；不存在时建立空 manifest/index。
+9. 读取 `ops/data/learning/progress/<collection_id>.yaml`；不存在时从模板建立。
+10. 读取 collection map、相关 domain summary 和必要 raw source。
 
-大型视频、音频和原书留在 NAS 对象目录。Agent 只把 Git 适合承载的轻量文本、元数据和预处理产物持久化到编译仓；处理大文件时使用临时工作区，并在任务结束后清理临时副本。
+大型视频、音频、原书、预处理结果和对象专属 Agent 产物都留在同一 NAS 对象目录。Git 只持久化规则、进度、稳定知识与 artifact 路径/哈希索引。处理文件时使用临时工作区，并在上传、校验和索引更新后清理临时正文。
 
 ## 3. 文件与语言决策
 
@@ -156,13 +157,28 @@ planned → ready → active → completed → review_due → reviewed
 
 - 原料和完整对话：NAS 主库对象目录 `raw/courses/<id>/` 或 `raw/books/<id>/`。
 - 提取、转写和中文译文：对象目录 `_prepared/`。
-- 单次高价值问答：`outputs/qa/learning/<collection>/<collection_id>/`。
-- 章节分析、逻辑整合和复盘：`write/drafts/learning/<collection>/<collection_id>/`。
-- 导图：`write/assets/learning/<collection>/<collection_id>/`。
+- 单次高价值问答：同一 NAS 对象的 `artifacts/qa/`。
+- 章节分析、逻辑整合和复盘：同一 NAS 对象的 `artifacts/analysis/`。
+- Canvas、Mermaid、图片导图：同一 NAS 对象的 `artifacts/maps/`。
+- 对象专属扩展阅读：同一 NAS 对象的 `artifacts/extensions/`。
+- NAS 产物清单：同一对象的 `artifacts/manifest.yaml`。
+- Git 控制面索引：`ops/data/learning/artifacts/<collection_id>.yaml`，只保存 NAS 路径、大小、`sha256`、生成者和时间。
 - 稳定单源知识：审批后进入 `wiki/summaries/<domain>/`。
 - 跨章节、跨课程或跨书综合：晋升审批后进入 `wiki/syntheses/`。
 
-完整聊天不能直接当作稳定知识页。导图不能替代 summary。
+对象专属产物正文只保存一份。不得在 `write/assets/learning/`、`write/drafts/learning/` 或 `outputs/qa/learning/` 留第二份正文。完整聊天不能直接当作稳定知识页，导图不能替代 summary。
+
+### 8.1 产物写入事务
+
+1. 在临时目录生成产物，保留 `collection_id` 与 `unit_id`。
+2. 按格式校验；Canvas 必须是合法 JSON，Markdown 必须可读。
+3. 上传到 NAS 对象的对应 `artifacts/` 子目录。
+4. 从 NAS 端计算并核对 `sha256` 和字节数。
+5. 同步更新 NAS `artifacts/manifest.yaml` 与 Git artifact 索引。
+6. 更新进度文件中的证据路径为 NAS 绝对路径。
+7. 删除临时正文，再报告完成。
+
+NAS 不可用时进入 `blocked`：不得把 Git 旧目录当成永久替代，不得更新索引为未落盘路径，也不得声称产物已保存。
 
 ## 9. 暂停、恢复与完成
 
@@ -191,4 +207,5 @@ planned → ready → active → completed → review_due → reviewed
 - 下一步行动；
 - 计划是否重排以及原因；
 - 新增产物路径；
+- NAS manifest 与 Git artifact 索引状态；
 - 需要用户确认的事项。
