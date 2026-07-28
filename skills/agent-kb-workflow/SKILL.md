@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "Complete agent-kb knowledge management workflow — ingest and query knowledge, manage PDF and series compilation, and assist course learning or book reading with Chinese-first preprocessing, translation to Chinese, flexible study progress, review, conversation synthesis, and knowledge-map routing. Use whenever the user mentions agent-kb, knowledge-base ingestion, a course, a book, reading, lessons, chapters, study progress, transcripts, or learning recovery."
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   author: Hermes Agent
   platforms: [linux, macos, windows]
   hermes:
@@ -26,6 +26,11 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 
 ### Key Rules (Apply to ALL Phases)
 - NAS stores, Agent machine compiles
+- Learning intake source of truth is the NAS browse root:
+  - courses: `/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/courses/`
+  - books: `/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/books/`
+- The macOS canonical repo is the Agent compilation worktree, not the user-facing course/book drop location
+- Keep large course media and original books in their NAS object folder; use temporary local processing when necessary and never add them to Git by default
 - Never announce completion before evidence
 - All seed objects must have real sources
 - Series ID is the canonical bridge between KB and workstation
@@ -433,8 +438,9 @@ Load the full procedure before acting:
 Core route:
 
 ```text
-object entry
+NAS object entry
 → file and language inventory
+→ lightweight compilation mirror
 → Chinese-ready preprocessing
 → unit structure
 → flexible sustained plan

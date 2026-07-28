@@ -14,14 +14,24 @@
 
 ## 2. 开工读取顺序
 
-1. 确认 canonical Agent-KB 根目录并同步 Git。
+课程与书籍的用户投料真源固定为：
+
+- 课程：`/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/courses/`
+- 书籍：`/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/books/`
+
+`/Users/lynch5mo/Work Documents/LLM/agent-kb` 是 macOS canonical 编译工作副本，不是用户投料入口。不得要求用户把课程视频或原书复制到本机路径。
+
+1. 确认 canonical Agent-KB 编译仓根目录并同步 Git。
 2. 读取 `schema/AGENT_RULES.md`。
 3. 读取 `schema/learning_collections_contract.md`。
-4. 从 `ops/data/learning/items.csv` 定位 `collection_id`。
-5. 读取对象的 `course.yaml|book.yaml`。
-6. 读取 `_prepared/manifest.yaml`；不存在时先做材料清点。
-7. 读取 `ops/data/learning/progress/<collection_id>.yaml`；不存在时从模板建立。
-8. 读取 collection map、相关 domain summary 和必要 raw source。
+4. 通过 NAS 主库清点课程或书籍对象目录；NAS browse 工作区只按对象读取，不执行全库 pull、reset、clean 或覆盖。
+5. 从 `ops/data/learning/items.csv` 定位 `collection_id`。
+6. 读取对象的 `course.yaml|book.yaml`。
+7. 读取 `_prepared/manifest.yaml`；不存在时先做材料清点。
+8. 读取 `ops/data/learning/progress/<collection_id>.yaml`；不存在时从模板建立。
+9. 读取 collection map、相关 domain summary 和必要 raw source。
+
+大型视频、音频和原书留在 NAS 对象目录。Agent 只把 Git 适合承载的轻量文本、元数据和预处理产物持久化到编译仓；处理大文件时使用临时工作区，并在任务结束后清理临时副本。
 
 ## 3. 文件与语言决策
 
@@ -144,7 +154,7 @@ planned → ready → active → completed → review_due → reviewed
 
 ## 8. 产物路由
 
-- 原料和完整对话：对象目录。
+- 原料和完整对话：NAS 主库对象目录 `raw/courses/<id>/` 或 `raw/books/<id>/`。
 - 提取、转写和中文译文：对象目录 `_prepared/`。
 - 单次高价值问答：`outputs/qa/learning/<collection>/<collection_id>/`。
 - 章节分析、逻辑整合和复盘：`write/drafts/learning/<collection>/<collection_id>/`。

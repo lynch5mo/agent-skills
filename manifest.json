@@ -4,7 +4,7 @@
   "skills": [
     {
       "name": "agent-kb-workflow",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "path": "skills/agent-kb-workflow",
       "entrypoint": "skills/agent-kb-workflow/SKILL.md",
       "package": "dist/agent-kb-workflow.skill",

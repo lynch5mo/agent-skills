@@ -68,6 +68,8 @@ Hermes: ~/.hermes/profiles/codex/skills/agent-kb-workflow
 
 仓库更新后重新拉取，并用新的 `skills/agent-kb-workflow` 目录替换旧版本。不要只复制 `SKILL.md`；`references/` 也是执行流程的一部分。
 
+从 v1.2.0 开始，课程与书籍的用户投料真源固定在 NAS 主库的 `raw/courses/` 与 `raw/books/`。本机 Agent-KB repo 仅作为 Agent 编译工作副本，不再作为用户投料入口。
+
 ## 版本
 
 当前版本见根目录 `manifest.json` 和 Skill 的 `SKILL.md` frontmatter。
