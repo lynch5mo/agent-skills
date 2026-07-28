@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "Complete agent-kb knowledge management workflow — ingest and query knowledge, manage PDF and series compilation, and assist course learning or book reading with Chinese-first preprocessing, translation to Chinese, flexible study progress, review, conversation synthesis, and knowledge-map routing. Use whenever the user mentions agent-kb, knowledge-base ingestion, a course, a book, reading, lessons, chapters, study progress, transcripts, or learning recovery."
 license: MIT
 metadata:
-  version: "1.3.0"
+  version: "1.4.0"
   author: Hermes Agent
   platforms: [linux, macos, windows]
   hermes:
@@ -30,10 +30,12 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
   - courses: `/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/courses/`
   - books: `/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/books/`
 - The macOS canonical repo is the Agent compilation worktree, not the user-facing course/book drop location
-- Keep large course media and original books in their NAS object folder; use temporary local processing when necessary and never add them to Git by default
-- Keep every object-specific question, analysis, map, and extension body in that same NAS object under `artifacts/`; Git stores only the artifact pointer/hash index at `ops/data/learning/artifacts/<collection_id>.yaml`
-- Never maintain a second artifact body under `write/assets/learning/`, `write/drafts/learning/`, or `outputs/qa/learning/`
-- Generate object artifacts in a temporary workspace, validate them, upload to NAS, verify `sha256`, update both manifests, then delete the temporary body
+- Keep video, audio, and original books in their NAS object folder regardless of file size; never add them to Git
+- Measure subtitle and slide files: `size_bytes <= 25000000` defaults to Git tracking, while larger files stay NAS-only with path, size, and SHA-256 in the object manifest
+- Keep lightweight preprocessing, Markdown conversations, progress, and every object-specific question, analysis, map, and extension under the same object path in Git
+- Store generated bodies under object `assets/`; `assets/manifest.yaml` is the single asset manifest
+- Never maintain a second asset body under NAS `artifacts/`, `write/assets/learning/`, `write/drafts/learning/`, or `outputs/qa/learning/`
+- Validate object assets, verify `sha256`, update the single manifest and real learning progress, then commit and push
 - Never announce completion before evidence
 - All seed objects must have real sources
 - Series ID is the canonical bridge between KB and workstation
@@ -443,9 +445,10 @@ Core route:
 ```text
 NAS object entry
 → file and language inventory
+→ type and 25,000,000-byte storage routing
 → Chinese-ready preprocessing
-→ NAS object artifacts (qa / analysis / maps / extensions)
-→ Git pointer/hash index
+→ Git object assets (qa / analysis / maps / extensions)
+→ single assets/manifest.yaml
 → unit structure
 → flexible sustained plan
 → real learning interaction
@@ -458,9 +461,9 @@ The canonical Agent-KB rules remain authoritative. Read, in order:
 
 1. `schema/AGENT_RULES.md`
 2. `schema/learning_collections_contract.md`
-3. the object `README.md`, metadata, preprocessing manifest, and NAS artifact manifest
-4. `ops/data/learning/artifacts/<collection_id>.yaml` and the progress file
+3. the object `README.md`, metadata, preprocessing manifest, and `assets/manifest.yaml`
+4. the progress file
 5. the relevant user or Agent handbook
 
 Do not mark a lesson or chapter learned merely because the Agent translated, summarized, or analyzed it.
-If NAS is unavailable, report the artifact write as blocked; do not create a durable Git fallback or claim completion.
+If NAS is unavailable, block only work that requires NAS-only source material; continue from existing Git translations, conversations, assets, and progress. If Git push fails, mark `sync_pending` and do not claim cross-device synchronization.

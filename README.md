@@ -72,6 +72,8 @@ Hermes: ~/.hermes/profiles/codex/skills/agent-kb-workflow
 
 从 v1.3.0 开始，一门课程或一本书的问答、分析、导图和扩展阅读正文也只保存在同一个 NAS 对象的 `artifacts/`。Git 仅保留路径与哈希索引，不再保存第二份对象产物正文。
 
+从 v1.4.0 开始，课程和书籍改为混合权威：视频、音频和原书始终 NAS-only；字幕和课件单文件不超过 25,000,000 字节时默认由 Git 跟踪，超过时保留 NAS 路径与校验；问答、分析、导图和扩展阅读统一进入对象内 Git 跟踪的 `assets/`，`assets/manifest.yaml` 是唯一资产清单。v1.4.0 取代 v1.3.0 的 NAS-only `artifacts/` 规则。
+
 ## 版本
 
 当前版本见根目录 `manifest.json` 和 Skill 的 `SKILL.md` frontmatter。

@@ -16,13 +16,25 @@
     {
       "id": 3,
       "prompt": "把我和 Agent 关于第三章的聊天整理成章节分析和知识导图，并更新阅读进度。哪些内容可以进知识库？",
-      "expected_output": "完整聊天保留在对象目录；分析和导图的唯一正文进入同一 NAS 对象的 artifacts 子目录；校验哈希并更新 NAS manifest 与 Git 索引；按真实互动更新进度；稳定知识需审批后才能进入 wiki。",
+      "expected_output": "完整聊天保留在对象目录；分析和导图进入对象的 Git 跟踪 assets 子目录；校验哈希并更新唯一 assets/manifest.yaml；按真实互动更新进度；稳定知识需审批后才能进入 wiki。",
       "files": []
     },
     {
       "id": 4,
-      "prompt": "帮我为这门课生成第九讲导图，但 NAS 现在连不上。你先把结果永久存在本机知识库里，之后再说。",
-      "expected_output": "识别 NAS 不可用；允许使用临时工作区但拒绝把 Git 旧目录作为永久替代；将 artifact 写入标记为 blocked；不更新为未落盘路径，不声称保存完成。",
+      "prompt": "帮我为这门课生成第九讲导图。中文译文和前八讲资产都在 Git，但 NAS 现在连不上。",
+      "expected_output": "若现有 Git 材料足够，则继续生成到对象 assets 并更新 manifest；只有需要原视频或其他 NAS-only 原料时才标记 blocked；不把 NAS 不可用扩大成整个学习对象不可用。",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "课程目录里有一个 3 MB 的英文 SRT、一个 31 MB 的 PDF 课件和一个 8 MB 的 MP4。按规则整理并告诉我哪些进 Git。",
+      "expected_output": "读取真实字节数；3 MB 字幕进入 Git；31 MB 课件保持 NAS-only 并在 manifest 记录路径、大小和 SHA-256；MP4 无论只有 8 MB 也保持 NAS-only。",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "手机上的 Hermes 已经生成了课程分析并提交，但 push 失败。现在能说所有设备都同步了吗？",
+      "expected_output": "不能声称跨设备同步；保留本地提交或工作树并标记 sync_pending；远端恢复后先 pull/rebase、解决冲突再 push，其他设备随后拉取。",
       "files": []
     }
   ]
