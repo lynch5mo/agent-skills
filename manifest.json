@@ -1,0 +1,17 @@
+{
+  "repository": "lynch5mo/agent-skills",
+  "visibility": "private",
+  "skills": [
+    {
+      "name": "agent-kb-workflow",
+      "version": "1.1.0",
+      "path": "skills/agent-kb-workflow",
+      "entrypoint": "skills/agent-kb-workflow/SKILL.md",
+      "package": "dist/agent-kb-workflow.skill",
+      "references": [
+        "skills/agent-kb-workflow/references/series-compilation-sop.md",
+        "skills/agent-kb-workflow/references/learning-collections-workflow.md"
+      ]
+    }
+  ]
+}
