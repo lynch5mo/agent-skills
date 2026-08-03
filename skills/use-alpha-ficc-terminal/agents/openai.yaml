@@ -1,0 +1,4 @@
+interface:
+  display_name: "Use Alpha-FICC Terminal"
+  short_description: "Alpha-FICC terminal and KB loop"
+  default_prompt: "Use $use-alpha-ficc-terminal to retrieve Agent-KB knowledge, build an observation model, fetch Alpha-FICC terminal data, push chart actions, and verify the action ledger."

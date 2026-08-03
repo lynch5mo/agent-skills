@@ -71,6 +71,76 @@
       "path": "skills/codex-claude-skill-install",
       "entrypoint": "skills/codex-claude-skill-install/SKILL.md",
       "package": "dist/codex-claude-skill-install.skill"
+    },
+    {
+      "name": "use-alpha-ficc-terminal",
+      "version": "1.0.0",
+      "path": "skills/use-alpha-ficc-terminal",
+      "entrypoint": "skills/use-alpha-ficc-terminal/SKILL.md",
+      "package": "dist/use-alpha-ficc-terminal.skill"
+    },
+    {
+      "name": "film-skill",
+      "version": "1.0.0",
+      "path": "skills/film-skill",
+      "entrypoint": "skills/film-skill/SKILL.md",
+      "package": "dist/film-skill.skill"
+    },
+    {
+      "name": "course-series-translation",
+      "version": "2.0.0",
+      "path": "skills/course-series-translation",
+      "entrypoint": "skills/course-series-translation/SKILL.md",
+      "package": "dist/course-series-translation.skill"
+    },
+    {
+      "name": "knowledge-base-to-article",
+      "version": "1.0.0",
+      "path": "skills/knowledge-base-to-article",
+      "entrypoint": "skills/knowledge-base-to-article/SKILL.md",
+      "package": "dist/knowledge-base-to-article.skill"
+    },
+    {
+      "name": "pay-peng-video-transcription",
+      "version": "1.0.0",
+      "path": "skills/pay-peng-video-transcription",
+      "entrypoint": "skills/pay-peng-video-transcription/SKILL.md",
+      "package": "dist/pay-peng-video-transcription.skill"
+    },
+    {
+      "name": "pdf-to-markdown-conversion",
+      "version": "1.0.0",
+      "path": "skills/pdf-to-markdown-conversion",
+      "entrypoint": "skills/pdf-to-markdown-conversion/SKILL.md",
+      "package": "dist/pdf-to-markdown-conversion.skill"
+    },
+    {
+      "name": "large-doc-chapter-split",
+      "version": "1.0.0",
+      "path": "skills/large-doc-chapter-split",
+      "entrypoint": "skills/large-doc-chapter-split/SKILL.md",
+      "package": "dist/large-doc-chapter-split.skill"
+    },
+    {
+      "name": "boe-paper-download",
+      "version": "1.0.0",
+      "path": "skills/boe-paper-download",
+      "entrypoint": "skills/boe-paper-download/SKILL.md",
+      "package": "dist/boe-paper-download.skill"
+    },
+    {
+      "name": "alpha-ficc-hermes-testing",
+      "version": "1.0.0",
+      "path": "skills/alpha-ficc-hermes-testing",
+      "entrypoint": "skills/alpha-ficc-hermes-testing/SKILL.md",
+      "package": "dist/alpha-ficc-hermes-testing.skill"
+    },
+    {
+      "name": "fupeng-models-charting",
+      "version": "1.0.0",
+      "path": "skills/fupeng-models-charting",
+      "entrypoint": "skills/fupeng-models-charting/SKILL.md",
+      "package": "dist/fupeng-models-charting.skill"
     }
   ]
 }

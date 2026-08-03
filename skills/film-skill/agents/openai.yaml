@@ -1,0 +1,4 @@
+interface:
+  display_name: "film-skill"
+  short_description: "Import, audit, and structure screenplay projects safely."
+  default_prompt: "Use $film-skill to ingest a PDF, DOCX, outline, or script from the Film intake entry, then deconstruct, run scene-unit and screenplay-format checks, structure, draft, or revise only within approved project boundaries. Save project-related chat backups under conversations/."
