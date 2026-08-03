@@ -7,11 +7,70 @@
       "version": "1.4.0",
       "path": "skills/agent-kb-workflow",
       "entrypoint": "skills/agent-kb-workflow/SKILL.md",
-      "package": "dist/agent-kb-workflow.skill",
-      "references": [
-        "skills/agent-kb-workflow/references/series-compilation-sop.md",
-        "skills/agent-kb-workflow/references/learning-collections-workflow.md"
-      ]
+      "package": "dist/agent-kb-workflow.skill"
+    },
+    {
+      "name": "ubuntu5-cloudflare-copyparty-recovery",
+      "version": "1.0.0",
+      "path": "skills/ubuntu5-cloudflare-copyparty-recovery",
+      "entrypoint": "skills/ubuntu5-cloudflare-copyparty-recovery/SKILL.md",
+      "package": "dist/ubuntu5-cloudflare-copyparty-recovery.skill"
+    },
+    {
+      "name": "nas-management",
+      "version": "1.0.0",
+      "path": "skills/nas-management",
+      "entrypoint": "skills/nas-management/SKILL.md",
+      "package": "dist/nas-management.skill"
+    },
+    {
+      "name": "movie-library-controlled-ops",
+      "version": "1.0.0",
+      "path": "skills/movie-library-controlled-ops",
+      "entrypoint": "skills/movie-library-controlled-ops/SKILL.md",
+      "package": "dist/movie-library-controlled-ops.skill"
+    },
+    {
+      "name": "media-library-inventory",
+      "version": "1.0.0",
+      "path": "skills/media-library-inventory",
+      "entrypoint": "skills/media-library-inventory/SKILL.md",
+      "package": "dist/media-library-inventory.skill"
+    },
+    {
+      "name": "android-obsidian-self-hosted-git",
+      "version": "1.0.0",
+      "path": "skills/android-obsidian-self-hosted-git",
+      "entrypoint": "skills/android-obsidian-self-hosted-git/SKILL.md",
+      "package": "dist/android-obsidian-self-hosted-git.skill"
+    },
+    {
+      "name": "android-termux-development",
+      "version": "1.0.0",
+      "path": "skills/android-termux-development",
+      "entrypoint": "skills/android-termux-development/SKILL.md",
+      "package": "dist/android-termux-development.skill"
+    },
+    {
+      "name": "hermes-desktop-troubleshooting",
+      "version": "1.0.0",
+      "path": "skills/hermes-desktop-troubleshooting",
+      "entrypoint": "skills/hermes-desktop-troubleshooting/SKILL.md",
+      "package": "dist/hermes-desktop-troubleshooting.skill"
+    },
+    {
+      "name": "multi-runtime-skill-install",
+      "version": "1.0.0",
+      "path": "skills/multi-runtime-skill-install",
+      "entrypoint": "skills/multi-runtime-skill-install/SKILL.md",
+      "package": "dist/multi-runtime-skill-install.skill"
+    },
+    {
+      "name": "codex-claude-skill-install",
+      "version": "1.0.0",
+      "path": "skills/codex-claude-skill-install",
+      "entrypoint": "skills/codex-claude-skill-install/SKILL.md",
+      "package": "dist/codex-claude-skill-install.skill"
     }
   ]
 }
