@@ -1,9 +1,9 @@
 ---
 name: android-obsidian-self-hosted-git
-description: 连接安卓手机到自建 Git 服务器上的 Obsidian 知识库（Termux + SSH + Obsidian Git 插件）
+description: Use when an Android Obsidian Vault must share one self-hosted Git checkout with Termux, especially when locating an existing Vault, avoiding duplicate clones, or applying Agent-KB device identity and graph policy.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: lynch5mo
   category: knowledge-management
 ---
@@ -11,6 +11,19 @@ metadata:
 # 安卓连接自建 Git Obsidian 知识库
 
 适用于：NAS 或私有服务器上托管的 Git 仓库 + 安卓手机 + Obsidian
+
+## 先复用现有 Vault，禁止直接创建第二份
+
+先从 Obsidian 的 Vault 管理页面确认完整路径。Agent-KB 的 Vivo 路径通常是 `/storage/emulated/0/agent-kb`。随后在 Termux 做只读核验：
+
+```bash
+cd "/storage/emulated/0/agent-kb"
+git rev-parse --show-toplevel
+git remote get-url origin
+git status --short --branch
+```
+
+只有路径不存在或 `git rev-parse` 明确证明它不是 Git checkout 时，才考虑 clone。不要因为 Termux 当前提示符在 `~` 就断言手机没有副本；Android App 私有目录和 `.git` 文件也可能使简单 `find -type d` 漏检。
 
 ## 前置条件
 - 安卓手机与服务器在同一内网（或有 VPN）
@@ -72,33 +85,47 @@ git clone ssh://<用户>@<IP>/<仓库路径>.git ~/storage/shared/<vault名>
 ```
 ⚠️ `~/storage/shared/` 对应手机内部存储根目录（`/storage/emulated/0/`）
 
-### 8. Obsidian 打开仓库
+### 9. Obsidian 打开仓库
 - 选 **Open folder as vault**
 - 路径：`/storage/emulated/0/<vault名>`
 
-### 9. 安装 Obsidian Git 插件
+### 10. 安装 Obsidian Git 插件（可选）
 - 设置 → 第三方插件 → 关安全模式 → 浏览 → 搜 **Obsidian Git** → 安装启用
 - 插件设置：
   - Vault backup interval：10
   - Auto pull on startup：打开
   - Auto push on commit：打开
 
+Termux 与 Obsidian Git 插件不要同时执行自动提交/推送；选择一个同步责任方，避免并发 commit 和 non-fast-forward。
+
+## Agent-KB Vivo 绑定与图谱规则
+
+在已确认的 `/storage/emulated/0/agent-kb` 中执行：
+
+```bash
+git config --local core.filemode false
+git pull --rebase origin main
+python3 ops/scripts/configure_agent_instance.py set hermes-vivo-mobile
+python3 ops/scripts/configure_agent_instance.py check Hermes
+bash ops/scripts/sync_obsidian_graph.sh
+bash ops/scripts/sync_obsidian_graph.sh --check
+```
+
+`core.filemode false` 只作用于当前 Android clone，用于消除共享存储的权限假变更。`outputs/` 继续由 Git 同步，但由 Agent-KB policy 排除出 Obsidian 搜索和关系图谱。
+
+`Rebuild vault cache` 必须从 Obsidian 命令面板执行，不是 Termux shell 命令。只有旧报告节点仍残留时才需要重建缓存。
+
 ## 常见坑
 1. **ssh-keygen 跑出帮助信息**：Termux 键盘输入可能有误（自动纠错、空格等）。用最简单的 `ssh-keygen` 不带任何参数
 2. **SSH 首次连接必须输 `yes` 不是 `y`**：输入 `y` 会反复报错
 3. **`~/storage/shared/` 不链接到手机存储**：必须先跑 `termux-setup-storage` 授权。如果弹出"管理所有文件"设置页，找到 Termux → 允许
 4. **判断 storage 是否生效**：跑 `realpath ~/storage/shared`，应该是 `/storage/emulated/0`，不是 `/data/data/com.termux/files/home/storage/shared`
-5. **storage 没有正确链接**：如果 `realpath` 显示的是 Termux 内部路径，且 `ls -la ~/storage/` 里 `shared` 没有 `->` 箭头，说明链接失败。修复方法：先删再重建
-   ```bash
-   rm -rf ~/storage
-   termux-setup-storage
-   ```
-   删除前如有已 clone 的仓库，先删仓库避免重复占用空间。如果 `termux-setup-storage` 运行时闪退，去 设置→应用→Termux→权限→所有文件访问权限 确认为允许状态，再重试
-5. **Obsidian 打开的路径是 `/storage/emulated/0/xxx`**，不是 `~/storage/shared/xxx`
-6. **5G 外网连不上内网 NAS**：必须同 WiFi 局域网
-7. **clone 顺序**：先 `termux-setup-storage` 再 clone，否则文件在 Termux 私有目录里，Obsidian 读不到
-8. **Graph 视图孤立节点太多**：`.obsidian/graph.json` 的设置（如 `showOrphans: false`）可能没完全生效。手动修复：打开 Graph → ⚙️ → 筛选 → 关掉「孤立文件」开关 → 搜索框输入 `path:"wiki/"` 过滤
-9. **`termux-setup-storage` 闪退**：安卓高版本需要先在系统设置里开权限再跑命令。顺序：设置→应用→Termux→权限→所有文件访问权限→允许，然后再跑 `termux-setup-storage`
+5. **storage 没有正确链接**：先到系统设置确认 Termux 的文件访问权限，再重新执行 `termux-setup-storage`；不要在未盘点现有内容时递归删除 `~/storage`
+6. **Obsidian 打开的路径是 `/storage/emulated/0/xxx`**，不是 `~/storage/shared/xxx`
+7. **5G 外网连不上内网 NAS**：必须同 WiFi 局域网或使用受控 VPN
+8. **clone 顺序**：先 `termux-setup-storage` 再 clone，否则文件在 Termux 私有目录里，Obsidian 读不到
+9. **Graph 仍有运行报告节点**：先应用并检查仓库的版本化 policy；缓存残留时在 Obsidian 命令面板执行 `Rebuild vault cache`，不要把它输入 Termux
+10. **`termux-setup-storage` 闪退**：安卓高版本需要先在系统设置里开权限再跑命令。顺序：设置→应用→Termux→权限→所有文件访问权限→允许，然后再跑 `termux-setup-storage`
 
 ## 远程同步方案（内网 IP 不可用时）
 

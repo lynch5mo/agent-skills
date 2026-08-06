@@ -1,11 +1,11 @@
 ---
 name: agent-kb-workflow
-description: "Complete agent-kb knowledge management workflow — ingest and query knowledge, manage PDF and series compilation, and assist course learning or book reading with Chinese-first preprocessing, translation to Chinese, flexible study progress, review, conversation synthesis, and knowledge-map routing. Use whenever the user mentions agent-kb, knowledge-base ingestion, a course, a book, reading, lessons, chapters, study progress, transcripts, or learning recovery."
+description: "Use when an Agent works in agent-kb, manages Obsidian graph/indexing, closes reports across Codex, Claude, or Hermes devices, ingests or queries knowledge, or handles courses, books, reading, lessons, study progress, transcripts, or learning recovery."
 license: MIT
 metadata:
-  version: "1.4.0"
+  version: "1.5.0"
   author: Hermes Agent
-  platforms: [linux, macos, windows]
+  platforms: [linux, macos, windows, android]
   hermes:
     tags: [knowledge-management, agent-kb, wiki, obsidian, compilation, dedup, concepts, course-learning, reading, study-planning]
     related_skills: [obsidian, llm-wiki]
@@ -46,6 +46,65 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 - Never overwrite original source files with transcripts, extraction, or translation output
 - Preprocessing readiness is not learning completion; update learning progress only from real user interaction
 - Use flexible sustained scheduling: weekly capacity first, daily minimum action when practical, and no failure reset for a missed day
+- Durable `outputs/` reports are Git-tracked across devices but excluded from Obsidian search and graph indexing; never use `.gitignore` as the graph boundary
+- Codex, Claude, and Hermes are instance-managed report families; bind each family once per clone before its first report
+- New managed-family reports go under the registered instance directory; never add a new report at a managed family root
+
+---
+
+## Cross-Device Agent Report Closeout
+
+Read `schema/AGENT_RULES.md`, `schema/agent_report_contract.md`, and `ops/agents/instance-registry.json` before closing any substantive Agent-KB task. The repository contract is authoritative if this Skill and the checkout ever differ.
+
+### Clone-local identities
+
+| Agent family | Instance | Platform | Local Git config |
+| --- | --- | --- | --- |
+| `Hermes` | `hermes-mac` | macOS | `agentkb.hermesInstance` |
+| `Hermes` | `hermes-ubuntu-desktop` | Ubuntu | `agentkb.hermesInstance` |
+| `Hermes` | `hermes-vivo-mobile` | Android | `agentkb.hermesInstance` |
+| `Codex` | `codex-mac` | macOS | `agentkb.codexInstance` |
+| `Codex` | `codex-ubuntu-desktop` | Ubuntu | `agentkb.codexInstance` |
+| `Claude` | `claude-code-mac` | macOS | `agentkb.claudeInstance` |
+| `Claude` | `claude-code-ubuntu-desktop` | Ubuntu | `agentkb.claudeInstance` |
+
+Bind an instance from inside the actual clone, then validate the canonical family name:
+
+```bash
+python3 ops/scripts/configure_agent_instance.py set <instance_id>
+python3 ops/scripts/configure_agent_instance.py check Hermes
+python3 ops/scripts/configure_agent_instance.py check Codex
+python3 ops/scripts/configure_agent_instance.py check Claude
+```
+
+Claude Code uses the canonical family `Claude`, never `ClaudeCode`. Identity lives only in that clone's `.git/config`; a new clone must bind again. Do not infer identity from hostname, username, IP, or device serial.
+
+### Durable report paths
+
+Managed families write only to:
+
+```text
+outputs/review/agent_task_summaries/<agent_family>/<instance_id>/TASK-<task-id>.md
+outputs/review/agent_activity/<agent_family>/<instance_id>/YYYY-MM-DD.md
+```
+
+Use the safe closeout entrypoint:
+
+```bash
+bash ops/scripts/agent_finish.sh <agent_family> TASK-<task-id> <summary-file.md>
+```
+
+It validates identity, injects `agent-report-v1` frontmatter, stages only the summary and activity record, commits, and pushes. Existing staged work blocks closeout; unrelated unstaged work stays untouched. A failed push preserves the local commit and returns `sync_pending`.
+
+Historical root-level reports are immutable legacy. `ops/agents/legacy-report-baseline.json` is the exact allowlist: do not migrate old reports, invent device provenance, add new root-level reports, or expand the baseline during ordinary work.
+
+### Git and Obsidian are separate boundaries
+
+- Durable reports remain Git-tracked so other Agents and devices receive them.
+- `ops/obsidian/index-policy.json` excludes all of `outputs/` and `write/` from Obsidian search and graph indexing.
+- After pull or policy changes, run `bash ops/scripts/sync_obsidian_graph.sh` and then `bash ops/scripts/sync_obsidian_graph.sh --check`.
+- If stale report nodes remain, run `Rebuild vault cache` from the Obsidian command palette, not from the shell.
+- On Android shared storage, the active Vault may be `/storage/emulated/0/agent-kb`; verify the real Vault and Git root before pulling.
 
 ---
 

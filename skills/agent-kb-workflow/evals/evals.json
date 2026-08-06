@@ -36,6 +36,24 @@
       "prompt": "手机上的 Hermes 已经生成了课程分析并提交，但 push 失败。现在能说所有设备都同步了吗？",
       "expected_output": "不能声称跨设备同步；保留本地提交或工作树并标记 sync_pending；远端恢复后先 pull/rebase、解决冲突再 push，其他设备随后拉取。",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "Vivo 上的 Hermes 在 /storage/emulated/0/agent-kb 完成 TASK-SAME。历史 Hermes 根目录报告不能迁移，新报告该写哪里？",
+      "expected_output": "先在真实 clone 绑定并检查 hermes-vivo-mobile；通过 agent_finish.sh 写入 Hermes/hermes-vivo-mobile 实例任务摘要和活动目录；不得写家族根目录或扩大 legacy 基线；push 成功后才可称为跨设备同步。",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "Ubuntu Desktop 的 Codex 要提交报告，但 agentkb.codexInstance 尚未配置。是否可以先写到 Codex 根目录？",
+      "expected_output": "不可以；先绑定 codex-ubuntu-desktop 并 check Codex；缺实例时必须在写文件前失败；新报告只能进入 Codex/codex-ubuntu-desktop 实例路径。",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "outputs 中的 Agent 报告需要 Git 同步，但不能出现在 Obsidian 关系图谱。应该把 outputs 加进 .gitignore 吗？旧节点仍在怎么办？",
+      "expected_output": "不能把 outputs 整体加入 .gitignore；耐久报告继续 Git 跟踪，同时由版本化 Obsidian policy、.obsidianignore 和 userIgnoreFilters 排除；应用并 check policy，旧节点仍在时从 Obsidian 命令面板执行 Rebuild vault cache。legacy 根目录报告保持原位但不进入图谱。",
+      "files": []
     }
   ]
 }

@@ -6,7 +6,7 @@
 
 | Skill | 主要用途 |
 |---|---|
-| `agent-kb-workflow` | Agent-KB 摄入、编译、检索、研究认知，以及课程和书籍学习管理 |
+| `agent-kb-workflow` | Agent-KB 摄入、编译、检索、学习管理，以及 Codex/Claude/Hermes 跨设备实例报告收口 |
 | `use-alpha-ficc-terminal` | Alpha-FICC 金融终端、当前图表上下文、图表数据、推图、标注和 V4/V5 Research OS |
 | `film-skill` | Agent-KB 剧本项目、Scrivener 导入导出、分场审计、格式检查和受控改稿 |
 
@@ -35,7 +35,7 @@
 | `nas-management` | TrueNAS、Synology、SMB、NAS Git、恢复、同步和安全文件操作 |
 | `movie-library-controlled-ops` | NAS 个人电影库扫描、决策包、重复隔离、回滚与核验 |
 | `media-library-inventory` | 本地/NAS 媒体盘点、sidecar 分类、目录重叠与重复报告 |
-| `android-obsidian-self-hosted-git` | Android、Termux、Obsidian 接入自建 Git 知识库 |
+| `android-obsidian-self-hosted-git` | Android、Termux、Obsidian 复用同一 Vault、直接 Git、设备绑定与图谱策略 |
 | `android-termux-development` | Termux 软件安装、Python 包兼容、进程与 APK 管理 |
 | `hermes-desktop-troubleshooting` | macOS Hermes Desktop Electron/backend 启动与连接排障 |
 | `multi-runtime-skill-install` | Codex、Claude、OpenCode、Hermes 多运行时安装 |
