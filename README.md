@@ -1,6 +1,6 @@
 # lynch5mo Agent Skills
 
-这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 20 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
+这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 21 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
 
 ## 核心业务 Skills
 
@@ -23,6 +23,7 @@
 | `large-doc-chapter-split` | 超大 Markdown 文档的章节拆分、目录和交叉链接 |
 | `boe-paper-download` | 英格兰银行 Quarterly Bulletin 和论文下载 |
 | `alpha-ficc-hermes-testing` | Alpha-FICC V1–V5、图表标注和 Research OS 专项验收 |
+| `maintain-alpha-ficc-terminal` | Ubuntu Hermes 定时巡检 Alpha-FICC API、Provider、刷新链路和数据健康，并按分级权限维护或生成 Builder 报告 |
 | `fupeng-models-charting` | 付鹏核心研究模型的旧版直接数据绘图工作流 |
 
 `fupeng-models-charting` 属于历史辅助路线；当前受治理的金融终端操作优先使用 `use-alpha-ficc-terminal`。
