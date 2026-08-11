@@ -3,6 +3,15 @@
 Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via:
 `skill_view(name="agent-kb-workflow", file_path="references/series-compilation-sop.md")`
 
+## Contents
+
+- [8-Step Flow](#8-step-flow-strict-order--do-not-reorder)
+- [Format Conversion Reference](#format-conversion-reference)
+- [Absolutely Prohibited](#absolutely-prohibited)
+- [Known Pitfalls](#known-pitfalls)
+- [Output-Safe Large-Batch Protocol](#output-safe-large-batch-protocol)
+- [Machine-Verifiable Evidence](#machine-verifiable-evidence-preferred)
+
 ## 8-Step Flow (Strict Order — Do Not Reorder)
 
 ### Step 1: Title Filter → Generate Manifest
@@ -56,11 +65,13 @@ Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via
 - Run lint checks: broken links, missing pages, orphaned summaries
 - Verify three zero-metrics: `pages_not_reachable_from_index=0`, `summaries_missing_from_domain_map=0`, `broken_summary_links=0`
 
-### Step 8: Closeout
-- `git add` all changed files
-- `git commit -m "<series-name>: <domain> series compilation — N files"`
-- `git push origin main`
-- Report: commit hash, file count, lint results, known gaps
+### Step 8: Verify + Closeout
+1. Verify the manifest count, per-file SHA-256, and required sections (`摘要`, `要点`, `实体`, `概念`, `原文摘录`) before treating the batch as complete
+2. Run lint checks and confirm the three zero-metrics are still zero
+3. `git add` all changed files
+4. `git commit -m "<series-name>: <domain> series compilation — N files"`
+5. `git push origin main`
+6. Report: commit hash, verified file count, lint results, known gaps
 
 ---
 
@@ -116,29 +127,37 @@ Expect these to produce longer summaries and more concepts.
 If the user says "编译分类进 knowledge" (or similar), **respect it**. Do NOT ask for reclassification — just document the user's decision in the classification proposal and proceed. Confirm only: "分类为 knowledge，确认开始编译？" with a simple "允许" response expected.
 
 ### 6. Tool Constraint Workarounds for Large Compilations (Batch Write Failure)
-When compiling large series (e.g. 29+ files), several Hermes tool constraints may surface. These are NOT environment-specific bugs — they are durable Hermes agent limitations with known workarounds.
+When compiling large series (e.g. 29+ files), some tool surfaces may truncate command output at exit 0 or time out on large write payloads. These are real failure modes to design around, but they are NOT a universal hard limit tied to a specific token or line count. The exact threshold differs by runtime and payload shape, so do not encode "~8K tokens" or "~50 lines" as a rule.
 
-#### 6a. `write_file` Payload Ceiling
-`write_file` times out when its content payload exceeds ~8K tokens (~50 lines of Markdown). **Do NOT attempt batch writes of concatenated files.** Write ONE file per tool call.
-- ✅ Safe: 51–56 line file via single `write_file` call
-- ❌ Fails: concatenating 3+ files into one `write_file` call (~150+ lines)
-- ✅ Recovery: write each summary individually; verify with `wc -l` after each batch
+#### 6a. `terminal` Output Truncation
+`terminal` (and similar shell tools) may truncate multi-line stdout while still exiting 0. **exit 0 + truncated output is NOT complete evidence.** The command may have run correctly; the visible result may not prove it.
+- ✅ Keep command output small: byte-cap (`| head -c <bytes>`), use `sort | uniq -c`, or print a single-line summary from a structured command
+- ✅ Validate filesystem state with `python3 -c` one-liners: `print(os.path.exists(path))`, `print(len([f for f in os.listdir(d) if ...]))`, or hash/format checks that print one line
+- ✅ Treat the manifest as the source of truth: compare the written inventory against the expected item list, then verify hashes
+- ❌ Do not use `ls`, `cat`, or `grep` multi-line output as the only proof of file enumeration or content completeness
+- ❌ `wc -l` alone never proves completeness: it counts lines, not required sections, content, or hashes
 
-#### 6b. `terminal` Output Truncation
-`terminal` frequently truncates multi-line stdout to exactly 1 line (exit 0, partial output). Do NOT rely on `ls`, `cat`, or grep output for file enumeration or content verification.
-- ✅ Use `wc -l` for file counting — this correctly returns the full count
-- ✅ Use `python3 -c` within `terminal` for structured validation (iterate filesystem with `os.listdir()`, check file contents, validate formats)
-- ✅ Confirm file existence via `python3 -c "import os; print(os.path.exists(path))"` rather than `ls path`
-- ❌ Avoid parsing multi-line shell output — it will be incomplete
+#### 6b. `write_file` Large Payload Timeout / Partial Write
+Large `write_file` payloads may time out mid-write. Treat a timeout as an **unknown write state**, not a committed success or a guaranteed failure.
+- ✅ Write ONE logical document per operation; never concatenate multiple documents into one payload
+- ✅ Compute expected size and SHA-256 independently BEFORE the final write, from the intended payload or the source manifest; never compute the acceptance hash from the file after writing and call that verification
+- ✅ If the full expected hash cannot be precomputed (for example, streaming/assembled content), maintain a chunk ledger with `chunk_id`, `offset`, `expected_size`, and per-chunk `hash`, and still validate the assembled file against every required section
+- ✅ For genuinely large documents, use bounded chunking: build content in chunks, write append-mode or merge with an idempotent retry that can safely resume
+- ✅ After a timeout, check the target first: if it already matches the expected hash, treat it as complete and do NOT rewrite; if it does not match, replace the whole file atomically or restore ONLY the missing/corrupt chunks
+- ✅ After each write, verify the file exists, matches the independently precomputed expected SHA-256, and contains every required section
+- ✅ Retry idempotently and ONLY the failed item/chunk; do not restart the whole batch, and do not rewrite successfully verified files
+- ❌ Do not batch-write several documents in one call just because the total is under some guessed line/token ceiling
+- ❌ Do not blindly append-and-retry the same content; an append retry over an already partially written file can duplicate chunks
+- ❌ Do not declare a document complete from a success-looking tool response alone without content verification
 
 #### 6c. Delegation / Subagent Timeouts
-Subagent (`delegate_task`) batches may time out silently for content-generation tasks (compilation, summary writing). This is NOT a rate-limit — it is a tool constraint for heavy text generation.
-- ✅ Preferred approach for compilation: manual single-file writes via `write_file` + validation via `python3 -c` in terminal
-- ✅ Use `terminal python3 -c` scripts for batch operations that need iteration (format checking, link validation, grep-style searches)
-- ❌ Do not rely on subagents for bulk summary generation — use them only for parallel research, code generation, or light inspection tasks
+Delegated content-generation batches may time out silently (compilation, summary writing). Prefer local single-document writes for the actual file creation; use subagents only for bounded research, code generation, or light inspection.
+- ✅ On timeout, enumerate which items are still missing from the manifest and retry only those
+- ✅ Validate every delegated result the same way as local output: presence, hash, required sections
+- ❌ Do not rely on subagents for bulk summary generation when local writes plus structured validation are available
 
 #### 6d. Counting Files Under Truncation
-When you need to confirm N files exist but `ls` truncates:
+When you need to confirm N files exist but multi-line output may truncate:
 ```python
 python3 -c "
 import os
@@ -150,3 +169,59 @@ for f in sorted(files):
     print(f'  {f}')
 "
 ```
+Pair the count with the manifest and per-file SHA-256; the count alone is a signal, not proof.
+
+---
+
+## Output-Safe Large-Batch Protocol
+
+Use this protocol for every large compilation batch. It generalizes the truncated-output and large-write cases above.
+
+### Mandatory rules
+- **exit 0 is not complete evidence**: a tool call can exit successfully while returning truncated output or failing to persist content; always verify the artifact, not the response text
+- **One logical document per write**: each summary/navigation/report file is written by its own operation; never concatenate multiple documents into one payload
+- **Bounded chunking with idempotent retry**: if a single document is too large for one write, split it at stable boundaries, append/merge deterministically, and make retries safe to resume
+- **Retry only failed pieces**: verify each item against the manifest and required sections before considering it done; a timeout retries the missing or corrupt item only
+- **Manifest + hash + required-section verification**: record expected path, size, and SHA-256 from the intended payload or source manifest BEFORE the final write lands; after writing, check the file exists, matches that independently computed hash, and contains every required section (`摘要`, `要点`, `实体`, `概念`, `原文摘录` for summaries). If precomputation is impossible, use a chunk ledger with `chunk_id`, `offset`, `expected_size`, and per-chunk `hash` plus required-section validation
+- **Byte-capped or structured single-line summaries**: prefer `head -c` capping, `python3 -c` state checks, and one-line counts over parsing long multi-line shell output
+- **`wc -l` is never proof**: line counts supplement manifest/hash/section verification; they cannot prove completeness
+- **Timeout recovery**: after any timeout, inspect the target first; matching expected hash means done, non-matching means atomic replacement or restoring only the missing/corrupt chunks, never blind append retries
+
+### Machine-Verifiable Evidence (Preferred)
+
+`scripts/verify_output_batch.py` is the preferred verification entrypoint for batch output. It reads a small expected JSON manifest and checks each file under `--root` for existence, byte size, SHA-256, and required sections. The manual protocol above remains the fallback when the script or a compatible manifest is unavailable.
+
+```bash
+python3 scripts/verify_output_batch.py \
+  --manifest expected-manifest.json \
+  --root /path/to/agent-kb \
+  --max-samples 10
+```
+
+Exit codes: `0` = every item verified; `1` = artifact mismatch; `2` = manifest/usage error. stdout is exactly one compact JSON line with `ok`, `expected`/`verified` counts, per-category error counts, and bounded samples (default 10, `--max-samples`). File content and secrets are never printed. Relative paths must stay under `--root`; duplicate paths, non-64-hex SHA-256 values, and unknown manifest fields are rejected as manifest errors.
+
+Minimal manifest schema:
+
+```json
+{
+  "schema_version": "1",
+  "files": [
+    {
+      "path": "wiki/summaries/knowledge/Game-Theory-01-0001.md",
+      "expected_size": 2048,
+      "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "required_sections": ["摘要", "要点", "实体", "概念", "原文摘录"]
+    }
+  ]
+}
+```
+
+Expected `size`/`sha256` are computed independently from the intended payload or source manifest before the final write; the verifier never derives the acceptance hash from the written file.
+
+### Closeout checklist
+1. `scripts/verify_output_batch.py` exits 0 against the expected manifest; the manifest lists every expected item and the actual item count matches
+2. Every written file matches the independently precomputed expected SHA-256 (or a verified chunk ledger plus required sections)
+3. Every summary contains all required sections
+4. Lint three zero-metrics remain zero
+5. Git status shows exactly the intended files; unrelated user changes are untouched
+6. Only then commit, push, and report completion
