@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "Use when an Agent works in agent-kb, manages Obsidian graph/indexing, closes reports across Codex, Claude, or Hermes devices, ingests or queries knowledge, or handles courses, books, reading, lessons, study progress, transcripts, or learning recovery."
 license: MIT
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   author: Hermes Agent
   platforms: [linux, macos, windows, android]
   hermes:
@@ -49,6 +49,8 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 - Durable `outputs/` reports are Git-tracked across devices but excluded from Obsidian search and graph indexing; never use `.gitignore` as the graph boundary
 - Codex, Claude, and Hermes are instance-managed report families; bind each family once per clone before its first report
 - New managed-family reports go under the registered instance directory; never add a new report at a managed family root
+- Output is evidence: a command exiting 0 with truncated or partial output is NOT complete proof; verify counts, hashes, and required sections, and write one logical document per operation. Expected size/SHA-256 must be computed independently from the intended payload or source manifest before the final write lands; do not accept a post-write backfill as verification
+- Prefer `scripts/verify_output_batch.py` as the machine-verifiable evidence entrypoint for batch output: it checks expected files (existence, size, SHA-256, required sections) from a small JSON manifest and prints one JSON line. Manual protocol checks are fallback only
 
 ---
 
@@ -288,7 +290,7 @@ Complete SOP for compiling large text series (e.g., 付鹏系列, Game Theory se
    - One source → one summary at `wiki/summaries/<domain>/<title>-<id>.md`
 6. **Concept Linking** → `[[concepts/finance/概念|概念]]` wiki-link format (not code backticks)
 7. **Navigation/Lint → update maps, check three zero-metrics**
-8. **Closeout → git commit + push**
+8. **Verify → Closeout**: run `python3 scripts/verify_output_batch.py --manifest <expected-manifest.json> --root "$PWD"` and require exit 0; manual counts, hashes, and required-section checks are fallback. Confirm lint zero-metrics, then git commit + push
 
 ### Dedup Rules
 Extract pure text → normalize → MD5 hash. Verdicts: IDENTICAL, SIMILAR, DIFFERENT, MOSTLY_IDENTICAL.
@@ -309,7 +311,7 @@ SRT → MD (strip timestamps and sequence numbers), HTML → MD (extract rich_me
 - **skill_view SOP lookup failure**: `references/standards/Series Compilation SOP.md` does NOT exist — SOP content is inline here. Use the new `references/series-compilation-sop.md` file instead.
 - **SRT language register**: spoken-word text contains colloquialisms, fragments, and repetition — normal, not a quality issue.
 - **Large examination episodes**: mid-terms and final exams are 2-3× longer than standard episodes.
-- **Tool constraint: batch write failure**: `write_file` times out beyond ~8K tokens (~50 lines of Markdown). Write one summary per call, never concatenated batches. When delegation/subagent times out during compilation, fall back to manual single-file writes + `python3 -c` terminal validation scripts. See `references/series-compilation-sop.md` Pitfall 6 for full workarounds including terminal output truncation patterns.
+- **Output-safe large batches**: terminal output may truncate at exit 0, and large `write_file` payloads may time out, but neither is a universal hard size limit. Prefer `scripts/verify_output_batch.py` for verification; fall back to byte-capped or structured single-line summaries, independently precomputed expected size/SHA-256 (from the intended payload or source manifest), manifest/hash/required-section verification, one logical document per write, bounded chunking with idempotent retries, and retry only failed pieces. After a timeout, check the target first: if it already matches the expected hash, do not rewrite; if it does not, use atomic replacement or restore only the missing chunks rather than appending repeatedly. `wc -l` alone never proves completeness. See `references/series-compilation-sop.md` Pitfall 6 for the full output-safe protocol.
 
 Full content archived at `agent-kb-series-compilation-sop`.
 

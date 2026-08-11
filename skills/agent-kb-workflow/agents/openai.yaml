@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent KB Workflow"
+  short_description: "Agent-KB knowledge workflow and closeout"
+  default_prompt: "使用 $agent-kb-workflow 从 NAS 课程或书籍入口开始预处理、编译、学习进度与跨设备报告收口，并在收尾前验证完整性和证据。"

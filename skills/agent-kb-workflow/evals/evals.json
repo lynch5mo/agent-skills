@@ -54,6 +54,18 @@
       "prompt": "outputs 中的 Agent 报告需要 Git 同步，但不能出现在 Obsidian 关系图谱。应该把 outputs 加进 .gitignore 吗？旧节点仍在怎么办？",
       "expected_output": "不能把 outputs 整体加入 .gitignore；耐久报告继续 Git 跟踪，同时由版本化 Obsidian policy、.obsidianignore 和 userIgnoreFilters 排除；应用并 check policy，旧节点仍在时从 Obsidian 命令面板执行 Rebuild vault cache。legacy 根目录报告保持原位但不进入图谱。",
       "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "编译 Game Theory 29 讲时，终端命令退出码是 0 但 stdout 只返回了 1 行，我怎么判断这 29 个摘要都写完了？",
+      "expected_output": "不能把 exit 0 + 截断输出当作完整证据；改用字节受限或单行结构化摘要（如 python3 打印存在性与计数）；以清单为准核对预期 29 个文件，再按独立预计算的 expected size/SHA-256（来自 intended payload 或 source manifest）和每个文件的摘要/要点/实体/概念/原文摘录必需节验证；wc -l 只能作为辅助，不能单独证明完整。",
+      "files": []
+    },
+    {
+      "id": 11,
+      "prompt": "写一篇很长的课程总结时 write_file 中途超时了，我现在该怎么办？",
+      "expected_output": "把超时视为未知写入状态，不当作成功也不当作必然失败；先检查目标文件，若已匹配独立预计算的 expected size/SHA-256 就不再重写，不匹配时用原子替换或只恢复缺失/损坏 chunk；无法预计算时维护含 chunk_id/offset/expected-size/hash 的分片 ledger 并校验必需节；只重试失败片，避免 append 重试重复，验证完整后再继续。",
+      "files": []
     }
   ]
 }
