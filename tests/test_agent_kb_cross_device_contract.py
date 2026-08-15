@@ -124,11 +124,13 @@ class AgentKbCrossDeviceContractTest(unittest.TestCase):
         versions = {item["name"]: item["version"] for item in payload["skills"]}
         self.assertEqual("1.6.0", versions["agent-kb-workflow"])
         self.assertEqual("1.1.0", versions["android-obsidian-self-hosted-git"])
+        self.assertEqual("1.0.0", versions["maintain-alpha-ficc-terminal"])
 
     def test_skill_packages_match_complete_source_directories(self):
         for skill_name in (
             "agent-kb-workflow",
             "android-obsidian-self-hosted-git",
+            "maintain-alpha-ficc-terminal",
         ):
             with self.subTest(skill_name=skill_name):
                 source = ROOT / "skills" / skill_name

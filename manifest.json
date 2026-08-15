@@ -141,6 +141,13 @@
       "path": "skills/fupeng-models-charting",
       "entrypoint": "skills/fupeng-models-charting/SKILL.md",
       "package": "dist/fupeng-models-charting.skill"
+    },
+    {
+      "name": "maintain-alpha-ficc-terminal",
+      "version": "1.0.0",
+      "path": "skills/maintain-alpha-ficc-terminal",
+      "entrypoint": "skills/maintain-alpha-ficc-terminal/SKILL.md",
+      "package": "dist/maintain-alpha-ficc-terminal.skill"
     }
   ]
 }
