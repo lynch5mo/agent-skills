@@ -1,227 +1,182 @@
 ---
 name: movie-folder-rename-cleanup
 description: >-
-  电影库批量规范化：导演/电影两级目录下，把电影文件夹改名为
-  中文名.英文名.年份.尺寸.格式.压缩信息-发布组，文件夹内只保留视频、
-  同名 nfo、同名带语言标识字幕；垃圾进 _trash_ 回收站不直接删。
+  电影库批量规范化：命名规范置顶（中文名.英文 Name.年份...），先完成电影夹与视频
+  文件名规范化，再做 NFO/字幕配对、夹内净化，最后结构整理；垃圾进 _trash_ 回收站
+  不直接删。
 license: MIT
 metadata:
-  version: "2.0"
+  version: "3.0"
   author: lynch5mo
   tags: [media, rename, cleanup, movie-library, ffprobe, naming-convention]
-  trigger: User asks to batch-rename movie folders/files to a standard naming convention, clean up non-video junk inside movie folders (zip/txt/posters), promote subtitles from subfolders to the movie folder root, or normalize a director-based movie library (e.g. /Volumes/115open/Media/Movie/<洲>/).
+  trigger: User asks to batch-rename movie folders/files to a standard naming convention, clean up non-video junk inside movie folders, promote subtitles from subfolders to the movie folder root, or normalize a director-based movie library (e.g. /Volumes/115open/Media/Movie/<洲>/).
 ---
 
 # Movie Folder Rename & Cleanup Skill
 
-## 用户命名规范（lynch5mo 定版，2026-08-22）
+## ⭐ 第一部分：命名规范（一切操作的基础，2026-08-24 定版）
 
 目录层级：`<媒体根>/<大洲>/<导演中文名 EnglishName>/<电影文件夹>/<文件>`
 
-| 对象 | 命名规则 | 示例 |
+### 1.1 标准命名表
+
+| 对象 | 规则 | 示例 |
 |---|---|---|
-| 电影文件夹 | `中文名.英文名.年份.尺寸.格式.压缩信息-发布组`（小写 release 风格） | `洛杉矶之战.battle.los.angeles.2011.720p.bluray.x264-bla` |
-| 视频文件 | 完整 release 原名，**不带中文** | `battle.los.angeles.2011.720p.bluray.x264-bla.mkv` |
-| nfo | 与视频同名 | 同上 `.nfo` |
-| 字幕 | 与视频同名 + 语言标识（.chs/.cht/.eng…） | 同上 `.chs.srt` |
+| 导演夹 | `中文名 EnglishName`（空格式，禁点格式） | `刁亦男 Yi'nan Diao` |
+| 电影夹 | `中文名.英文 Name.年份.尺寸.格式[.音轨]-发布组` | `太阳照常升起.The Sun Also Rises.2007.CHINESE.1080p.Blu.dts-fgt` |
+| 视频文件 | `English Name.年份.尺寸.格式-发布组.ext`（不带中文） | `The Sun Also Rises.2007.CHINESE.1080p.Blu.dts-fgt.mkv` |
+| NFO | 与视频 basename 完全一致 | 同上 `.nfo` |
+| 字幕 | 视频 basename + 语言标识 + 原扩展名 | 同上 `.chs.srt` / `.chs.ass` / `.eng.srt` |
 
-### 硬性用户偏好（必须遵守）
-1. **保持原大小写，禁止擅自改写**——release 名是 `Chappie.2015.1080p.WEB-DL...RARBG` 就原样保留（含 WEB-DL 大写、RARBG 大写）；只有当用户明确同意某部电影用小写风格时才用小写。
-2. **发布组标识原样保留**——`m-tibi` 就写 `-m-tibi` 后缀，不要"帮"用户规范成 `-mtibi`。
-3. **文件名里不要中文名**；中文只出现在电影文件夹名的开头段。
-4. 无语言标识的字幕：**保留**，命名跟视频文件同名（无语言后缀）。
-5. 删除永不 `rm`：统一移入 `<媒体根>/_trash_<区域>_<YYYYMMDD>/`，完成后让用户决定清空。`.DS_Store`、`._*` 例外：直接删除。
-6. **`movie.nfo` 必须先配对改名才能参与整理**：通用名 `movie.nfo` 无法被 Kodi/TMM 关联到具体影片。整理任何影片夹之前，先把 `movie.nfo` 改名为与**同夹视频文件同名**（规则见 Phase 0.5）。锚定的是**视频文件名**，不是文件夹名。
-7. **字幕与视频同名 + 语言标识**：`<视频文件名全名>.<语言标>.<原扩展名>`（如 `....mkv` 配套 `....chs.srt`）；无语言标识的字幕保留原名不造标签；与视频不同压制版的字幕进回收站不硬配。
-8. **导演夹命名全库统一 `中文名 EnglishName`**——包括中国/港台导演也要英文全名（如 `侯孝贤 Hsiao-hsien Hou`、`王家卫 Kar Wai Wong`）。**英文名不确定时必须上豆瓣 / TMDB / IMDb 查证后使用，禁止猜测或留空**；查证结果记录进计划表让用户过目。
-9. **执行通道默认走 NAS SSH**（`lynch5mo@192.168.10.33` 的 `/media/CloudDrive/115open/...`），避开 Mac SMB 层 NFD 编码问题；FUSE 上全树 find 会超时，用 CD2 缓存库（dir_cache.sqlite，含 115 文件 ID/大小/SHA1）+ 定点 ls 替代。大批量移动优先建议用户在 115 App/网页端做。
+### 1.2 空格规则（2026-08-24 用户定为绝对规则）
 
-## Workflow
+- **英文名内部单词之间用空格，不用点连接**。点只作段落分隔符。
+- 电影夹：`混在北京.The Strangers in Beijing.1995.720p.H264.AC3` ✅　`混在北京.The.Strangers.in.Beijing...` ❌
+- 视频：`The Strangers in Beijing.1995.720p.H264.AC3.mkv` ✅
+- 年份及之后的 token 保持点分隔：`英文名（空格）.年份.分辨率.编码.音轨-发布组`
+- 语言标识标准化：`.zh/.chn/.chn0→.chs`、`.cht`、`.eng` 保持小写。
 
-### Phase 0 — 扫描盘点（强制按国家分批，禁一次扫整洲）
+### 1.3 冲突与缺失处理（禁止造名）
 
-**推进单位 = 一个国家**。一次只处理一个国家，完成验证汇报后再开下一个；单国过大再按导演分批。上下文过载是历史事故源，不得贪多。
+1. **保持原大小写、发布组原样**——release 是 `WEB-DL`/`RARBG` 就原样保留；发布组 `m-tibi` 不许写成 `-mtibi`。
+2. **年份冲突**：目录用查证后的影片年份；视频文件保留 release 原始 token（如《无名狂》目录 2019、文件保留 `Wild.Swords.2020`）。
+3. **发布组不可考**：标 `Unk` 或省略该段，禁止编造（《苹果》B 版 → `AAC-Unk`）。
+4. **夹名与实际内容不符**：一律以视频实片为准重新查证改名（《寻枪》原夹误标 The Missing Sun；《地球最后的夜晚》错标 2014→2018）。
+5. **文件名里不要中文**；中文只出现在电影夹名的开头段。
+6. **不确定的 token 进报告单议，不能猜**。
+
+### 1.4 电影夹内容白名单（净化标准）
+
+夹内只允许存在：
+
+- 视频文件（mkv/mp4/avi/rmvb/ts/m2ts/iso/wmv/mov/m4v…）
+- 与视频同名的 `.nfo`
+- 与视频 basename 一致 + 语言标识的字幕（srt/ass/ssa/sub/idx/sup/vtt）
+
+其余一切（海报/fanart/clearlogo/backdrop/torrent/RARBG.txt/exe/论坛htm/lnk/url/sample/播放器截图/广告视频/.dat VOB 老副本/Sample 子夹）= 垃圾，**当批移入 `_trash_`**，禁止标"暂留项"拖后。`.DS_Store`/`._*` 直接删。
+
+### 1.5 查证渠道（三源闭环）
+
+1. 夹内 NFO 的 title/originaltitle/year/director；
+2. ffprobe 实测时长+分辨率（验证 runtime 是否吻合）；
+3. IMDb suggestion API：`https://v2.sg.media-imdb.com/suggestion/x/<关键词>.json`（豆瓣已限流，仅作参考）；tt 号可反查 `/suggestion/t/<tt号>.json`。
+
+三源互相印证后再写名；任何单源存疑即出报告。
+
+## ⭐ 第二部分：定版执行顺序（唯一流程，2026-08-24 校正版）
+
+> 命名规范化是整理的第一步，不是收尾。以下顺序优先级高于一切旧阶段编号。
+
+**Step 1 只读盘点**：国家 → 导演 → 电影夹 → 文件三级清单生成 JSON；FUSE 层禁全树 find，浅层 scandir 分块扫。
+
+**Step 2 电影夹 + 视频文件名规范化**：按第一部分规则逐夹生成新名；多版本先做版本判定（见第三部分）；查证闭环后才允许执行。
+
+**Step 3 NFO 配对改名**：锚定已稳定的视频 basename；一夹多视频不自动猜配，进待裁决清单；孤儿 movie.nfo 不动出报告。
+
+**Step 4 字幕同名化**：basename 对齐最终视频名 + 语言标识标准化 + 子夹字幕提级到夹根（idx/sub 成对）；异版字幕（release 对不上）进回收站不硬配。
+
+**Step 5 夹内净化**：白名单外全部移 `_trash_`（保 `<导演>/<电影夹>` 层级）；清完逐夹复扫残留=0；空壳夹留壳不删。
+
+**Step 6 结构规整 / 归类 / 去重**：最后才做。格式层溶解、裸视频收编、跨导演移动、合集拆解、全库去重都以此为前提。
+
+每步完成后：终验四件套（见第五部分）+ KB 批次报告落档。
+
+## 第三部分：多版本判定（EDITION 全留原则）
+
+同片多副本先 ffprobe（时长 duration + streams 分辨率/codec），再分档：
+
+- **时长不同 = 不同剪辑**（导演剪辑/未删减/短剪辑）→ 全部保留，各自规范化（《太阳照常升起》6687s vs 6972s；《南方车站》未删减版）
+- **同剪辑不同分辨率/编码** = QUALITY → 留最优（4K>1080>720；同分辨率留大码率），其余进回收站（《狗十三》：4K.HEVC 与 1080.HEVC 时长同为 5799s → 删 1080 留 4K；但 4K.AVC 时长 7274s 不同 → 保留）
+- **SHA1 完全相同** = EXACT → 副本进回收站
+- 撞车判定用 CD2 缓存库服务器端 SHA1：`select ci.path,f.id,f.name,f.size,f.file_hash from files f join cached_item ci on f.parent_id=ci.id where ci.path like ? and f.name like ?`
+
+## 第四部分：执行通道与工具
+
+### ffprobe 通道（宿主机/Mac 均无 ffprobe）
 
 ```bash
-find "<目标国家根>" -mindepth 1 | sort
-```
-拿到该国全树。识别每部电影的：视频 / nfo / 字幕（可能在子文件夹里）/ 垃圾（zip、txt、海报、jpg）/ 结构病态（裸文件、格式中间层）。
-
-### Phase 0.5 — `movie.nfo` 配对改名（整理前必做，不可跳过）
-
-通用名 nfo 先于一切改名/清理动作处理。**严格限定在单部电影夹内配对，绝不跨夹按文件名匹配**（历史教训：寂静人生 nfo 险些塞进咖啡时光）。
-
-```python
-# 伪代码：每部电影夹内
-videos = [f for f in files if ext in {mkv,mp4,avi,m4v,ts,iso,wmv,mov} and not f.startswith('._')]
-mnfos  = [f for f in files if f.lower() == 'movie.nfo']
+# 方式一：jellyfin 容器（容器内媒体根 /Media/Media/Movie/…）
+docker exec jellyfin /usr/lib/jellyfin-ffmpeg/ffprobe -v error \
+  -show_entries format=duration:stream=codec_name,width,height,bit_rate -of json '<容器内路径>'
+# 方式二：镜像直跑（挂载 /media/CloudDrive → /data）
+docker run --rm --entrypoint /usr/lib/jellyfin-ffmpeg/ffprobe \
+  --mount type=bind,src=/media/CloudDrive,dst=/data,readonly \
+  sha256:68e012f4bf5aeb114632e9045f5b2f2f6713536693093f70fcb338179f84f86c ... '/data/115open/Media/…'
 ```
 
-三种情形：
-1. **恰好 1 视频 + movie.nfo** → 改名：`movie.nfo` → `<视频文件名去扩展名>.nfo`。锚定视频文件名而非文件夹名（子目录分片/双编码版如 `AVC.mp4` 时，nfo 跟 `AVC.mp4` 对齐成 `AVC.nfo`，不照抄文件夹名）。
-2. **多视频 + movie.nfo**（cd1/cd2 分片、AVC/HEVC 双版等）→ **不自动分配**，该夹进"待裁决清单"，向用户报告后由用户指定配给哪个视频（默认建议配第一个正片，用户点头才动）。
-3. **无视频 + movie.nfo** → **不动它**，出报告（孤儿元数据；可能是正片在暂存区未归位的信号，参考 recovery skill 的 NFO 配对闭环规则）。
+### SSH 通道
 
-补充判定：
-- 若同夹已有与视频同名的 `<video>.nfo`，又另有一个 `movie.nfo` → `movie.nfo` 视为冗余，进回收站。
-- BDMV 原盘结构（m2ts 在 STREAM/ 下）没有"文件级视频名"，movie.nfo 保持原名并出报告。
-- 改名结果必须进入 Phase 2 计划表第②张表，随整批动作一起让用户确认后才执行。
+- `lynch5mo@192.168.10.33`，BatchMode=yes 密钥认证，sudo 免密；FUSE `/media/CloudDrive` uid=0 **脚本必须 sudo**。
+- 写操作走 `ssh … sudo -n python3 -` 传整段脚本；**每次调用拆小块**（<~8K tokens 输出）防 stream timeout。
+- FUSE 上 find/du 大目录超时 → 用 scandir 浅层扫描；审计 JSON 用 scp 拉回本地分析。
+- **含单引号路径会截断 Bash**（`Yi'nan Diao` 实证）→ 特殊字符路径全部走 Python os.rename 逐字处理，不走 shell mv。
 
-### Phase 0.6 — 字幕同名化（与 Phase 0.5 同批处理）
+### 回收站
 
-字幕文件 = **视频文件名全名 + 语言标识 + 原扩展名**，同时从子夹提级到电影夹根目录：
+- 路径：`<媒体根>/_trash_<区域>_<YYYYMMDD>/<任务说明>/<导演>/<电影夹>/`——保层级，回滚直接 mv 回去。
+- 铁律：删除永不 rm；**永远不用 rmdir/rm -d**（CD2 FUSE 对非空目录 rmdir 会递归转发云端删除，8-23 书记.mkv 事故实证）。清场一律 mv。
+- 清完垃圾变空壳的夹：**留壳不删**，出报告待裁决（张律·黄绮琳空壳实证）。
+- 不刷新 CD2 缓存、不重启 clouddrive 容器、不碰 `/DATA/AppData/clouddrive/Config` 下 sqlite。
 
-```
-改前: chs.srt / 简体中字.ass / Subs/xxx.sub
-改后: The.Assassin.2015.1080p.BluRay.x264-ROVERS.chs.srt
-      The.Assassin.2015.1080p.BluRay.x264-ROVERS.chs.ass
-      Subs/The.Assassin....sub → 提级到根（idx/sub 对保留成对）
-```
+## 第五部分：终验清单（固定四件套 + 净化复扫）
 
-判定规则：
-1. **无语言标识的字幕**：保留原名不造语言标签（用户定版）。
-2. **字幕与视频不同压制版**（名字里的 release 组对不上）：**进回收站**——硬配会假装时间轴同步没问题。拿不准的列出来问用户。
-3. **同语言多个字幕**（两个 .chs.srt 内容不同）：默认只留一个进回收站其余；或加 `.chs.1` 后缀区分——列计划表让用户拍板，不自作主张。
-4. 语言标识识别顺序：原文件名已有 `.chs/.cht/.eng/.big5` 等标 → 沿用；无标但内容可判（如 BIG5 编码文本→cht）→ 建议标注并让用户确认；判不出 → 保持无名。
+每批次结束必须核验并写进报告：
 
-### Phase 0.7 — 结构规整：导演层只允许一层电影夹
+1. 旧目录名残留 = 0（重扫确认）
+2. 目录/文件 inode 不变（rename 非 copy）
+3. 字节数不变（视频/NFO 未损坏）
+4. 夹内非白名单残留 = 0（逐夹复扫）
+5. 回收站清单可逆（列出路径与大小）
 
-导演夹下**不允许裸文件、不允许格式中间层**。三种病态结构按序处理：
+## 第六部分：特殊件单议（原地不动出报告）
 
-**A. 裸视频收编建夹**（视频直接躺在导演层）：
-```
-王颖 Wayne Wang/
-   中国匣.Chinese_Box_(1997).cd1.avi  ❌
-   中国匣.Chinese_Box_(1997).cd2.avi     ↓ 新建电影夹收编整组
-   中国匣 (1997)/                     ✅ cd1+cd2+nfo+海报一起进夹
-```
-- 同片聚合依据：文件名共同前缀（cd1/cd2/partN 是一部片不是多部）
-- 新夹名按命名规范生成（缺年份/尺寸/格式用 ffprobe 实测），进计划表确认
+以下类型**不改名不移动**，进单议清单等用户拍板：
 
-**B. 并列格式层全部溶解**（`DVD / BluRay / 蓝光 / WEB / WEB-DL / HDTV / HDDVD` 等）：
-```
-贾法·帕纳西 Jafar Panahi/
-   DVD/白气球.../  WEB/越位.../  蓝光/(...)   ❌ 三层并列全拆
-      ↓ 全部电影整夹上提到导演层，格式夹空了就删
-```
-- **有几个拆几个**，不限一个；同一部片跨格式夹重复出现时，提层后触发去重三档流程（EXACT/QUALITY/EDITION），不默默堆两份
-- **内容分类层不动**：`短片 / 纪录片 / 花絮` 不是格式层，保持原状出报告另议
-- 格式夹内的散件 torrent/txt 进回收站，不跟着上提
+- 身份不明裸视频（无夹无元数据）
+- 无中文可考片名（Something in Blue 案例）
+- 无年份短片（607 短片案例）
+- 夹名与视频完全对不上的归属矛盾件（Keep 'Em Rolling 1934 vs keep rolling.2020 案例）
+- 同片双导演归属矛盾（日掛中天：蔡尚君 vs 张律 双夹并存）
+- 仅 .rm 等残缺格式无完整 release 信息（静静的嘛呢石短片版案例）
+- NFC/NFD 双夹并存（山田洋次案例）——合并前必须核对内容
 
-**C. 处理顺序**：先 B 溶解格式层 → 再 A 收编裸视频 → 最后统一走 Phase 0.5/0.6 的 nfo/字幕配对。
+## 第七部分：Pitfalls（血泪清单）
 
-### Phase 1 — 不规范文件名：ffprobe 读真实信息
-对没有标准 release 名的视频（如 `m-tibi-1080p.mkv`），不要猜：
-```bash
-ffprobe -v error -select_streams v:0 \
-  -show_entries stream=codec_name,width,height -show_entries format=duration,bit_rate \
-  -of json "<video>"
-```
-- height→尺寸（1080）；codec_name h264/x265→格式；nfo 里的 AUDiO 行可补音轨（AC3/AAC）；
-- 发布组从原文件名 token 里取；年份从旧文件夹名 `(YYYY)` 取。
-- 新名 = `英文名.年份.尺寸.格式[.音轨]-发布组`，**每个 token 都要让用户在计划表里看到并确认**。
+1. 先提级字幕再处理子文件夹；顺序反了报 Directory not empty。
+2. 先 mv 文件、最后 mv 文件夹——文件夹名先改后续路径全失效；脚本用变量存旧路径。
+3. 网络 SMB 卷 `._*` 在 find -delete 时可能已消失，报 ENOENT 属正常，容忍或单独跑。
+4. 中英混排文件名含空格和特殊符号——变量必须双引号包裹；mv 源路径逐字符复制自 find/scandir 输出，禁止手打（**空格 vs 点写法差异坑 mv**：Weekend Lover ≠ Weekend.Lover）。
+5. ffprobe 在网络卷较慢，批量时可用容器通道；单文件可接受。
+6. zip 里可能是唯一字幕来源——先解压提级再删包；DBfansub 这类只有字幕没视频的整包进回收站。
+7. 用户会核对每一个字符——计划表新名字要一字不差展示，执行参数与计划表完全一致。
+8. UUID"目录"可能是 6KB 文件——先 ls -la 确认类型再操作。
+9. SMB 卷读过的文件会重新生成 `._*` 残影——每阶段结束重跑清理。
+10. Python 脚本函数定义放顶部，防 NameError。
+11. 终端审批对 find -delete / 批量 mv 敏感——execute_code 内 subprocess 跑更稳，或拆小步。
+12. 无 nfo 的电影是原始状态，不算问题不补造。
+13. os.walk 大卷超时——按国/导演分批，每批 <175s。
+14. NFD 幽灵条目：scandir 可列出但 join 后 stat/move ENOENT——跳过记录，新建用 NFC。
+15. mv 目标带"?"等备注字符会真实建目录——目标必须是最终规范名。
+16. 跨层嵌套错误：移动后立即 listdir 验证扁平性。
+17. movie.nfo 配对只认所在夹内视频，绝不跨夹匹配。
+18. 异版字幕硬配是自欺——时间轴可能全乱，宁可回收站。
+19. 格式层溶解前先查撞车，防止瞬间制造重复。
+20. 华语导演英文名三源任一确认才写入，拼错破坏刮削。
+21. FUSE ls 会显示同 inode 双条目残影——判断双夹用 find -maxdepth 1 -type d 或比对 inode。
+22. 合并前查目标夹内容：空壳直接并入；同名文件冲突进回收站不覆盖。
+23. **FUSE rmdir 递归删除陷阱**（书记.mkv 事故）：CD2 FUSE 对非空目录 rmdir 把递归删除转发云端。铁律：永远不用 rmdir/rm -d，清场一律 mv 进 _trash_；证据链=115 文件 ID+SHA1+字节数。
+24. 撞车判定用 CD2 缓存 file_hash 服务器端 SHA1，秒级实锤。
+25. **脚本报错先核对现场再重跑**：rename 前逐项 check old_exists/new_absent/target_exists；幂等设计让重复执行无害（赵亮批次拼错源名零改动兜底实证）。
+26. **计划复核再执行**：批量清场前先把 plan JSON 打出来人工过一遍边角（sample/广告视频/错配 nfo/字幕 basename），比事后返工便宜。
+27. 单引号路径截断 Bash——Python 逐字处理（见第四部分）。
+28. 大批量 SSH 调用拆小块防 stream timeout；审计产物 scp 回本地分析。
 
-### Phase 2 — 生成计划表给用户确认（必做，不可跳过）
-按电影逐条列三张表：
-1. 文件夹改名：旧 → 新
-2. 文件改名 / 字幕提级（子文件夹 → 根目录）
-3. 删除清单（进 _trash_ 的每一项）
+## 第八部分：已完成实例（战例存档）
 
-同时列出所有"拿不准的决策点"（如发布组写法、是否补音轨段）让用户拍板。
-**用户回复确认后才执行。**
-
-### Phase 3 — 执行（一个 set -e 脚本跑完）
-顺序很关键：
-```bash
-set -e
-mkdir -p "$TRASH"
-# ① 字幕先提级到电影根目录，再 rmdir 空子文件夹
-mv "$MOVIE/subdir/"*.srt "$MOVIE/"
-rmdir "$MOVIE/subdir"
-# ② 垃圾进回收站
-mv "$MOVIE/xxx.zip" "$TRASH/"
-# ③ 文件改名（保持大小写！）
-mv "$MOVIE/超能查派Chappie.2015....mkv" "$MOVIE/Chappie.2015....mkv"
-# ④ 最后改文件夹名（避免路径中途失效）
-mv "$MOVIE_DIR_OLD" "$MOVIE_DIR_NEW"
-# ⑤ 系统垃圾直删
-find "$BASE" \( -name ".DS_Store" -o -name "._*" \) -type f -delete
-```
-
-### Phase 4 — 验证汇报
-- `find` 全树复查：结构是否符合规范；
-- `_trash_` 目录 ls 给用户看（里面有什么、多大）；
-- 残留垃圾检查计数 = 0；
-- 汇报格式：每部电影 ✅ + 改动明细 + trash 内容清单。
-
-## Pitfalls
-
-1. **先提级字幕再 rmdir 子文件夹**——顺序反了会报 Directory not empty。
-2. **先 mv 文件、最后 mv 文件夹**——文件夹名先改的话后续路径全失效；一个 set -e 脚本里要用变量存旧路径。
-3. **网络卷（SMB/NFS）上的 `._*` 可能在 find -delete 时已消失**——报 "No such file or directory" 属正常，set -e 下给 find 单独跑或容忍该错误。
-4. **`find -delete` 需要终端审批**——预估会被拦，提前说明用途；或拆成不带 -delete 的 find + xargs rm 分步。
-5. **中英混排文件名含空格和 `·`**——所有变量必须双引号包裹；mv 源路径逐字符复制自 find 输出，不要手打。
-6. **ffprobe 在网络卷上较慢**——单文件可接受；批量时先拷贝到本地 /tmp 再 probe 会快很多。
-7. **zip 里可能就是字幕包**（例：battle_los_angeles_*.zip 内含 srt）——解压检查确认内容已在别处存在后才准进 trash；若 zip 是唯一字幕来源，先解压提级再删 zip。
-8. **用户会核对每一个字符**——计划表里的新名字要一字不差地展示，包括大小写和连字符数量；执行时的 mv 参数必须与计划表完全一致。
-
-## 大洋州实战补充（2026-08-22，46 部）
-
-### 用户拍板的新决策（后续大洲沿用）
-1. **导演文件夹统一空格式**：`中文名 EnglishName`（如 `安德鲁·多米尼克 Andrew Dominik`），点格式 `戈兰·斯托列夫斯基.Goran Stolevski` 全部改为空格式。
-2. **非标准视频名重构**（ffprobe 实测后）：`英文名.年份.尺寸.h264.音轨-发布组`，发布组保留原写法（`sector7-lordofwar.1080p-x264` → `lord.of.war.2005.1080p.h264.dts-sector7`）。若原文件夹名已是规范 release 名，文件向文件夹名对齐（我机器人 dfn_* → I.Robot...DEFiNiTE）。
-3. **字幕包 rar/zip**：解压提级到电影根 → 包进回收站。DBfansub 这类"只有字幕没有视频"的整包 → 回收站。
-4. **字幕与视频不同发布版**（时间轴可能不齐）→ 进回收站。
-5. **合集/** 目录不是导演：查实际导演建新导演文件夹移入。
-6. 文件夹年份 vs release 年份冲突时按 release（空气之魂 1988→1989）。
-
-### 新踩坑
-9. **UUID"目录"可能是 6KB 文件**——先 `ls -la` 确认类型再 rmdir/mv。
-10. **SMB 卷上读过的文件会重新生成 `._*` 残影**——每阶段结束后都要重跑一次 `._*` 清理，最终验证前再跑一次。
-11. **@MOVEDIR@ 跨目录移动时目标父路径拼接容易错**——本次把戈兰/瑞秋·沃德/库泽尔错误放到了大洋州顶层而非澳大利亚下，靠最终 find 全树检查发现并归位。跨洲移动后必须复查顶层结构。
-12. **Python 脚本内函数定义顺序**——to_trash_safe 在定义前被调用导致 NameError；脚本要先把所有函数定义放顶部。
-13. **终端审批对 find -delete / 批量 mv 敏感**——改用 execute_code 内跑 Python os.rename/shutil 更稳，或拆小步。
-14. **无 nfo 的电影是原始状态**（20/45 部本来就没有）——不算问题，不补造。
-
-## 亚洲实战补充（2026-08-22，~1500部/11国，去重+归类新增能力）
-
-### 去重流程（用户定版）
-1. 全量收集视频(名/大小/路径) → 按标题+年份分组 → 三档分类：
-   - **EXACT**：同名同大小 → md5 实锤后删副本（保留规则：导演目录>合集>散件；正名>(1)目录）
-   - **QUALITY**：按用户标准只留最优（4K>1080p>720p；同分辨率留大码率）；sample 直接删
-   - **EDITION/MULTI**：CC版vs普通版、EXTENDED vs 剧场版等 → 默认全保留
-2. **假重复甄别**：CD分片(cd1/cd2/partN)不是重复；不同片名被年份配对是误分组（塚本死亡解剖vs恶梦侦探）——跨目录组必须人工核对片名再删
-3. md5 抽查用前32MB即可区分压制版本
-4. 用户裁决案例：A沟口祇园姊妹vs浪花悲歌=1936年两部不同片都保留；B双压制留有nfo的
-
-### 大库操作技巧
-5. SMB 大卷 os.walk 会超时——按国家/导演分批跑，每批<175s；后台跑+轮询不可靠时改前台分片
-6. 视频统计含 BDMV 原盘结构（m2ts在STREAM/），不算普通视频文件
-7. NFD Unicode 目录名（日文 ô=о+ˆ）：os.path.isdir 对 join(path, name) 可能 False，用 scandir 的 entry.is_dir() 才准
-8. 一导一片的国家层目录「导演 (年份)」= 导演层简化形态，改名去掉年份括号即成标准导演层
-
-### 合集拆解流程（日本实战定版）
-9. 先列导演目录全集，再逐片查证导演归属；导演目录不存在的用 `中文名 EnglishName` NFC 格式新建。
-10. 同片不同压制（KOOK vs WiKi 等）：md5 前32MB 对比，DIFF 时保留带字幕/更实用的一份，另一份进回收站。
-11. **NFD 幽灵条目**：SMB 卷上 NFD 分解式 Unicode 名（ô=о+ˆ）的目录/文件 scandir 可列出但 join 路径后 stat/move 全部 ENOENT，ls/find 也不可见——这是客户端缓存残影。无法访问即跳过并记录报告；新建同名目录用 NFC 规避。文件名含 NFD 字符（如 Lazarová）同理。
-12. 非本国影片混入（旬报里的捷克/南斯拉夫片）→ 移到媒体根 `_非日本片_待归类/` 暂存出报告，不自作主张归大洲。
-13. 纪录片（NHK等无单一导演）、美国翻拍日本故事（忠犬八公）、动画TV系列 → 留合集出报告让用户定。
-
-### 已完成实例补充
-- 2026-08-22 日本合集拆解：合集44项→剩5项（纪录片×2/美国片×2/动画TV系列），粉红系22项→剩14项（多导演粉红片留原处），电影旬报26散文件全部处置（导演归位12/重复删8/非日本片暂存5+1幽灵）。新建导演目录约25个（含NFC规避NFD幽灵：大岛渚 Nagisa Oshima 等）。
-- 2026-08-22 香港拆解：银河→杜琪峰26部，香港合集29→6，三级片37→22，导演目录28→51。台湾误放片移中国台湾/合集。
-- 2026-08-22 韩国拆解：其他合集32→12（幽灵条目6个无法访问），下女1960双压制留CC删MiniSD，隧道归金容华。
-- 2026-08-22 中国拆解：华语经典合集65→12，其他73→32。万玛才旦.zip实为目录已正名。跨区移动：热带雨→南亚/陈哲艺、沦落人→香港/陈小娟、日本片×3→日本、只是意外(帕纳西)→西亚。
-
-### 脚本防呆教训
-15. mv目标目录名里带"?"或"不对"等查证备注会真实创建目录——先想清楚再写代码，目录名必须是最终规范名。
-16. 跨层嵌套错误（A/B两层同名目录）：移动后立即listdir验证扁平性。
-17. **`movie.nfo` 配对只认"所在电影夹内的视频"**——绝不允许全局按文件名找视频配对；一夹多视频时不自动猜配，进待裁决清单。孤儿 movie.nfo（无视频）不动不删，出报告等用户。
-18. **异版字幕硬配是自欺**——release 组对不上的字幕改名后 Kodi 照样加载，但时间轴可能全乱；宁可进回收站或问用户。
-19. **格式层溶解前先查撞车**——同一部片在 DVD/ 和 WEB/ 各有一份时，提层瞬间制造重复；提层清单要预先做跨格式夹的片名比对，撞车的标出去重流程。
-20. **华语导演英文名不许猜**——豆瓣/TMDB/IMDb 三源任一确认后才写进夹名；拼错导演英文名会破坏刮削器匹配（Kar Wai Wong ≠ Karwai Wong）。
-- 2026-08-22 亚洲阶段A+B：王颖(1)合并、以伊黎并入西亚、UUID×5清理、42个冗余文件170GB进回收站（`_trash_亚洲_20260822/`）。剩余：合集拆解(C)和改名(D)按国推进。
-
-## 已完成实例
-- 2026-08-22 `/Volumes/115open/Media/Movie/非州/`：3 部电影全部规范（洛杉矶之战/超能查派/土狼之旅），trash 位于 `/Volumes/115open/Media/Movie/_trash_非州_20260822/`。
-- 2026-08-22 `/Volumes/115open/Media/Movie/大洋州/`：45 部电影全部规范，5 个 UUID 垃圾、10+ Sample、全部 torrent/txt/rar/海报图清理完毕，点格式导演统一为空格式，合集→瑞秋·沃德 Rachel Ward 新建归位。trash 位于 `/Volumes/115open/Media/Movie/_trash_大洋州_20260822/`。验证：45 视频=45 文件夹，0 垃圾残留，0 空目录。
+- 2026-08-22 非州 3 部、大洋州 45 部全规范；点格式导演统一改空格式。
+- 2026-08-22 亚洲阶段A+B：王颖合并、UUID×5 清理、42 个冗余文件 170GB 进回收站。
+- 2026-08-22 日本/香港/韩国/中国合集拆解：银河→杜琪峰26部、香港29→6、华语经典65→12 等。
+- 2026-08-23 中国区 7 件结构整理（万玛才旦合并、NFO 配对 82 审计、字幕同名化 14 夹 23 字幕、15 导演夹改名）。
+- 2026-08-24 中国区全量命名规范化：约 90 个导演批次连续推进（万玛才旦/娄烨/张艺谋/贾樟柯/姜文/刁亦男/刘伽茵/徐浩峰/陈凯歌/忻钰坤/郝杰/宁浩/曹保平/李云波/毕赣/顾晓刚/丁晟/万力/乌尔善/任鹏远/何群/冯小刚/李杨/李玉/赵亮/郭帆/马楠/大鹏/孔笙/周全/周浩/周子阳/徐磊系/黄建新系…至全区 152 夹达标）；关键查证案例：《西小河的夏天》(tt5644394)、《寻枪》、《混在北京》(tt7937808)、《无名狂 Wild Swords》。
+- 2026-08-24 空格规则回溯：64 夹+236 文件由点式改空格式，重扫残留 0。
+- 2026-08-24 夹内净化补课：152 夹扫描，251 项垃圾进 `_trash_中国_20260824/naming_junk_0824/`，149+3 夹达白名单标准，终验逐夹复扫通过。
