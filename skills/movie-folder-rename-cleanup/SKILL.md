@@ -170,6 +170,8 @@ docker run --rm --entrypoint /usr/lib/jellyfin-ffmpeg/ffprobe \
 26. **计划复核再执行**：批量清场前先把 plan JSON 打出来人工过一遍边角（sample/广告视频/错配 nfo/字幕 basename），比事后返工便宜。
 27. 单引号路径截断 Bash——Python 逐字处理（见第四部分）。
 28. 大批量 SSH 调用拆小块防 stream timeout；审计产物 scp 回本地分析。
+29. **NFC/NFD 双目录实体陷阱**（小津 `Yasujirô` 实证）：同一导演夹可能同时存在 NFD 实体（真实数据）与 NFC 幻影（FUSE 读穿透/写落平行空壳）。症状：rename 报成功但旧文件原样在、新夹 inner 为空。操作前必须 `unicodedata.normalize('NFC',name)` 比对枚举到的所有同名变体；一律走**数据所在实体路径**；幻影空壳清 `_trash_` 留证。每次 rename 后必须 stat 新路径验证实体存在（防 GHOST no-op）。
+30. **夹内视频文件 EN 化后必须同步对齐同 basename 的 nfo/srt**，且改名前先 listdir 拿逐字真名（手打猜名必 MISS）；多 cd 文件用 part1/part2 或 cd1/cd2 后缀保留。
 
 ## 第八部分：已完成实例（战例存档）
 
