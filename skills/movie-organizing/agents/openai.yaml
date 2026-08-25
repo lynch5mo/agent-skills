@@ -1,0 +1,4 @@
+interface:
+  display_name: "Movie Organizing"
+  short_description: "分批规范化杂乱电影库"
+  default_prompt: "Use $movie-organizing to scan a mixed movie library, build a batch standard, triage items, lock a plan, and execute verified batches."

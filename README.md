@@ -1,6 +1,6 @@
 # lynch5mo Agent Skills
 
-这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 20 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
+这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 21 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
 
 ## 核心业务 Skills
 
@@ -35,6 +35,7 @@
 | `nas-management` | TrueNAS、Synology、SMB、NAS Git、恢复、同步和安全文件操作 |
 | `movie-library-controlled-ops` | NAS 个人电影库扫描、决策包、重复隔离、回滚与核验 |
 | `media-library-inventory` | 本地/NAS 媒体盘点、sidecar 分类、目录重叠与重复报告 |
+| `movie-organizing` | 杂乱电影库中性扫描、本批标准、三档分流、计划锁定与分批验证 |
 | `android-obsidian-self-hosted-git` | Android、Termux、Obsidian 复用同一 Vault、直接 Git、设备绑定与图谱策略 |
 | `android-termux-development` | Termux 软件安装、Python 包兼容、进程与 APK 管理 |
 | `hermes-desktop-troubleshooting` | macOS Hermes Desktop Electron/backend 启动与连接排障 |

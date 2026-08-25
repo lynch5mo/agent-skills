@@ -38,6 +38,13 @@
       "package": "dist/media-library-inventory.skill"
     },
     {
+      "name": "movie-organizing",
+      "version": "1.0.0",
+      "path": "skills/movie-organizing",
+      "entrypoint": "skills/movie-organizing/SKILL.md",
+      "package": "dist/movie-organizing.skill"
+    },
+    {
       "name": "android-obsidian-self-hosted-git",
       "version": "1.1.0",
       "path": "skills/android-obsidian-self-hosted-git",
