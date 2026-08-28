@@ -234,30 +234,31 @@ def _collect_sidecars(
                 target = target_dir / f"{target_stem}.nfo"
                 result.append({"kind": "nfo", "source": str(source), "target": str(target)})
                 continue
-            if not lower_name.startswith(prefix):
-                continue
-            if source.suffix.casefold() not in SUBTITLE_EXTENSIONS:
-                continue
-            suffix = entry.name[len(source_stem) :]
-            language_match = re.fullmatch(
-                r"\.(zh|chn|chn0|chs|cht|eng)(\.[^.]+)", suffix, flags=re.IGNORECASE
-            )
-            if not language_match:
-                # A subtitle without a recognized language marker cannot be
-                # renamed safely because adding one would invent metadata.
-                result.append(
-                    {
-                        "kind": "subtitle_invalid",
-                        "source": str(source),
-                        "target": "",
-                    }
+            if lower_name.startswith(prefix) and source.suffix.casefold() in SUBTITLE_EXTENSIONS:
+                suffix = entry.name[len(source_stem) :]
+                language_match = re.fullmatch(
+                    r"\.(zh|chn|chn0|chs|cht|eng)(\.[^.]+)", suffix, flags=re.IGNORECASE
                 )
+                if not language_match:
+                    # A subtitle without a recognized language marker cannot be
+                    # renamed safely because adding one would invent metadata.
+                    result.append(
+                        {
+                            "kind": "subtitle_invalid",
+                            "source": str(source),
+                            "target": "",
+                        }
+                    )
+                    continue
+                marker = language_match.group(1).casefold()
+                marker = {"zh": "chs", "chn": "chs", "chn0": "chs"}.get(marker, marker)
+                suffix = f".{marker}{language_match.group(2)}"
+                target = target_dir / f"{target_stem}{suffix}"
+                result.append({"kind": "subtitle", "source": str(source), "target": str(target)})
                 continue
-            marker = language_match.group(1).casefold()
-            marker = {"zh": "chs", "chn": "chs", "chn0": "chs"}.get(marker, marker)
-            suffix = f".{marker}{language_match.group(2)}"
-            target = target_dir / f"{target_stem}{suffix}"
-            result.append({"kind": "subtitle", "source": str(source), "target": str(target)})
+            # Any other NFO/subtitle in a movie unit is not safely attributable.
+            if source.suffix.casefold() == ".nfo" or source.suffix.casefold() in SUBTITLE_EXTENSIONS:
+                result.append({"kind": "sidecar_unrelated", "source": str(source), "target": ""})
     return sorted(result, key=lambda item: item["source"])
 
 
@@ -420,15 +421,25 @@ def _build_bundle(parent: Path, videos: Sequence[Path], task_root: Path) -> Dict
         )
 
     sidecars = _collect_sidecars(parent, video, video.stem, normalized_stem, target_dir)
-    invalid_subtitle = next(
-        (item for item in sidecars if item["kind"] == "subtitle_invalid"), None
+    invalid_sidecar = next(
+        (
+            item
+            for item in sidecars
+            if item["kind"] in {"subtitle_invalid", "sidecar_unrelated"}
+        ),
+        None,
     )
-    if invalid_subtitle:
+    if invalid_sidecar:
+        reason = (
+            "subtitle language marker is ambiguous"
+            if invalid_sidecar["kind"] == "subtitle_invalid"
+            else "unrelated NFO/subtitle sidecar is not attributable"
+        )
         return _empty_bundle(
             parent,
             video,
             source_shape,
-            f"subtitle language marker is ambiguous: {invalid_subtitle['source']}",
+            f"{reason}: {invalid_sidecar['source']}",
             expected_movie_dir=expected_dir_name,
             expected_movie_dir_path=str(target_dir),
             expected_video_target=str(expected_video_target),
@@ -628,6 +639,11 @@ def _mark_exception(bundle: Dict[str, object], reason: str) -> None:
     bundle["actions"] = []
 
 
+def _destination_key(path: str | Path) -> Tuple[str, str]:
+    destination = _canonical(path)
+    return str(_canonical(destination.parent)), _name_key(destination.name)
+
+
 def make_plan(task_root: str | Path) -> Dict[str, object]:
     root = _canonical(task_root)
     if not root.is_dir():
@@ -640,7 +656,7 @@ def make_plan(task_root: str | Path) -> Dict[str, object]:
     ]
     # Two independent units planning the same destination cannot be applied
     # safely as a batch. Isolate both before any mutation.
-    destination_owners: Dict[Path, Dict[str, object]] = {}
+    destination_owners: Dict[Tuple[str, str], Dict[str, object]] = {}
     for bundle in bundles:
         if bundle.get("status") not in {"NAMING_PASS", "ACTION_REQUIRED"}:
             continue
@@ -648,13 +664,13 @@ def make_plan(task_root: str | Path) -> Dict[str, object]:
         source_value = bundle.get("source_movie_dir")
         if not destination_value or not source_value:
             continue
-        destination = _canonical(str(destination_value))
-        owner = destination_owners.get(destination)
+        destination_key = _destination_key(str(destination_value))
+        owner = destination_owners.get(destination_key)
         if owner and owner.get("source_movie_dir") != source_value:
             _mark_exception(bundle, f"target collision with {owner.get('source_movie_dir')}")
             _mark_exception(owner, f"target collision with {source_value}")
         else:
-            destination_owners[destination] = bundle
+            destination_owners[destination_key] = bundle
     summary = {
         "total_units": len(bundles),
         "naming_pass": sum(item["status"] == "NAMING_PASS" for item in bundles),
@@ -766,14 +782,26 @@ def _verify_bundle(bundle: Dict[str, object], root: Path) -> List[str]:
     return problems
 
 
+def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
+    plan_root = _canonical(str(plan.get("task_root", "")))
+    if plan_root != root:
+        return "plan task_root does not exactly match provided TASK_ROOT"
+    plan_hash = plan.get("plan_hash")
+    if not isinstance(plan_hash, str) or not plan_hash:
+        return "plan hash missing"
+    if plan_hash != _plan_signature(plan.get("bundles", [])):
+        return "plan hash mismatch"
+    return None
+
+
 def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
     root_path = _canonical(root)
-    plan_root = _canonical(str(plan.get("task_root", "")))
-    if plan_root != root_path:
+    integrity_error = _plan_integrity_error(plan, root_path)
+    if integrity_error:
         return {
             "status": "FAIL",
-            "missing": ["plan task_root does not exactly match provided TASK_ROOT"],
-            "error_summary": "plan task_root mismatch",
+            "missing": [integrity_error],
+            "error_summary": integrity_error,
         }
     missing: List[str] = []
     for bundle in plan.get("bundles", []):
@@ -795,9 +823,6 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             "executed_actions": 0,
             "error_summary": "plan task_root mismatch or outside task root",
         }
-    expected_hash = plan.get("plan_hash")
-    if expected_hash and expected_hash != _plan_signature(plan.get("bundles", [])):
-        return {"status": "FAIL", "executed_actions": 0, "error_summary": "plan hash mismatch"}
 
     actions: List[Dict[str, object]] = []
     planned_dirs: set[Path] = set()
@@ -811,6 +836,10 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             actions.append(action)
             if str(action.get("action", action.get("type", ""))) == "mkdir":
                 planned_dirs.add(_canonical(str(action["target"])))
+
+    integrity_error = _plan_integrity_error(plan, root_path)
+    if integrity_error:
+        return {"status": "FAIL", "executed_actions": 0, "error_summary": integrity_error}
 
     if dry_run:
         return {
@@ -843,6 +872,26 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             "error_summary": "post-apply verification failed: " + str(verification["error_summary"]),
         }
     return {"status": "PASS", "executed_actions": executed, "error_summary": ""}
+
+
+def _write_result(root: Path, mode: str, plan: Dict[str, object], result: Dict[str, object]) -> Path:
+    recovery = root / WORK_RECORD_DIR / "recovery"
+    recovery.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    result_path = recovery / f"result-{mode}-{timestamp}.json"
+    record: Dict[str, object] = {
+        "schema": "movie-organizing-preprocessor/result/v1",
+        "version": VERSION,
+        "mode": mode,
+        "task_root": str(root),
+        "plan_path": str(plan.get("plan_path", "")),
+        "plan_hash": str(plan.get("plan_hash", "")),
+        **result,
+    }
+    result_path.write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return result_path
 
 
 def _cli_summary(report: Dict[str, object]) -> Dict[str, object]:
@@ -886,6 +935,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         result = apply_plan(plan, task_root, dry_run=args.dry_run)
     else:
         result = verify_plan(plan, task_root)
+    result["mode"] = args.mode
+    try:
+        result_path = _write_result(task_root, args.mode, plan, result)
+        result["result_path"] = str(result_path)
+    except OSError as error:
+        result["result_write_error"] = str(error)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "PASS" else 1
 

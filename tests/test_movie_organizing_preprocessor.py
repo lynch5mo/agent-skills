@@ -1,4 +1,5 @@
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -434,6 +435,89 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             bundle = self._find_bundle(plan, video.stem)
             self.assertEqual("EXCEPTION", bundle["status"])
             self.assertIn("conflicting", bundle["exception"].lower())
+            self.assertTrue(video.exists())
+
+    def test_unrelated_nfo_or_subtitle_is_exception_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            self._make(src_dir, "OtherMovie.nfo", "<movie><title>别的片</title></movie>".encode())
+            self._make(src_dir, "OtherMovie.chs.srt")
+            plan = self._plan(root)
+            bundle = self._find_bundle(plan, video.stem)
+            self.assertEqual("EXCEPTION", bundle["status"])
+            self.assertIn("unrelated", bundle["exception"].lower())
+            self.assertFalse(bundle["actions"])
+            self.assertTrue(video.exists())
+
+    def test_cli_apply_and_verify_persist_recovery_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            script = str(SCRIPT_PATH)
+            plan_output = subprocess.run(
+                ["python3", script, "plan", "--task-root", str(root)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            plan_summary = json.loads(plan_output.stdout)
+            plan_path = plan_summary["plan_path"]
+            apply_output = subprocess.run(
+                ["python3", script, "apply", "--task-root", str(root), "--plan", plan_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            apply_summary = json.loads(apply_output.stdout)
+            apply_record = Path(apply_summary["result_path"])
+            self.assertTrue(apply_record.is_file())
+            self.assertEqual("apply", json.loads(apply_record.read_text())["mode"])
+            self.assertEqual(plan_summary["plan_hash"], json.loads(apply_record.read_text())["plan_hash"])
+            verify_output = subprocess.run(
+                ["python3", script, "verify", "--task-root", str(root), "--plan", plan_path],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            verify_summary = json.loads(verify_output.stdout)
+            verify_record = Path(verify_summary["result_path"])
+            self.assertTrue(verify_record.is_file())
+            self.assertEqual("verify", json.loads(verify_record.read_text())["mode"])
+
+    def test_plan_collision_uses_parent_and_casefolded_nfc_name_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "中文片 Movie (2020)"
+            second = root / "中文片 Movie [alt] (2020)"
+            self._make(first, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            self._make(second, "movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            bundles = [
+                item for item in plan["bundles"]
+                if Path(item["source_movie_dir"]).name in {first.name, second.name}
+            ]
+            self.assertEqual(2, len(bundles))
+            self.assertTrue(all(item["status"] == "EXCEPTION" for item in bundles))
+            self.assertTrue(all("collision" in item["exception"].lower() for item in bundles))
+            self.assertTrue((first / "Movie.2020.1080p.WEB-DL.x264-RLS.mkv").exists())
+            self.assertTrue((second / "movie.2020.1080p.WEB-DL.x264-RLS.mkv").exists())
+
+    def test_missing_plan_hash_is_rejected_by_apply_and_verify(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            plan.pop("plan_hash")
+            apply_result = self._apply(plan, root)
+            self.assertEqual("FAIL", apply_result["status"])
+            self.assertIn("hash", apply_result["error_summary"])
+            verify_result = self._verify(plan, root)
+            self.assertEqual("FAIL", verify_result["status"])
+            self.assertIn("hash", verify_result["error_summary"])
             self.assertTrue(video.exists())
 
 

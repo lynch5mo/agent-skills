@@ -98,6 +98,8 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 ```
 
 `plan` 的输出会给出唯一 `plan_path`；后两步必须使用该确切文件（不能凭 glob 猜旧计划）。
+`apply` 与 `verify` 的输出同样会给出 `result_path`，对应的 JSON 记录包含 mode、plan hash、状态、
+动作计数和错误摘要；缺失或篡改 `plan_hash` 时两步均在任何改动前失败。
 
 脚本只使用 Python 3 标准库和一次轻量 `os.scandir()` 清单，计划与结果写入现有
 `TASK_ROOT/_work-record_/recovery/`；对话只汇报计数、动作数和异常摘要。脚本支持的普通命名动作
