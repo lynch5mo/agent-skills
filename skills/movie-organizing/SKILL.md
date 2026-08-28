@@ -6,7 +6,7 @@ description: >-
   的命名规范与硬安全规则；无 NFO 是原始状态，不自动补造。
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1"
   author: lynch5mo
   tags: [media, movie-library, normalization, naming-convention, batch-plan]
   trigger: User asks to normalize, rename, clean, or restructure a mixed or messy
