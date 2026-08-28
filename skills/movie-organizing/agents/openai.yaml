@@ -1,4 +1,4 @@
 interface:
   display_name: "Movie Organizing"
-  short_description: "分批规范化杂乱电影库"
-  default_prompt: "Use $movie-organizing to scan a mixed movie library, build a batch standard, triage items, lock a plan, and execute verified batches."
+  short_description: "先文件名快通道，再隔离异常的电影库规范化"
+  default_prompt: "Use $movie-organizing for unattended normalization within an explicit TASK_ROOT: recover, build a filename-only inventory, read the full naming-contract, classify NAMING_PASS/NAMING_READY/EXCEPTION, process NAMING_READY in locked 10–20 item batches and early-exit after a successful naming rescan, route only EXCEPTION through limited triage and verification, then run the final scan."

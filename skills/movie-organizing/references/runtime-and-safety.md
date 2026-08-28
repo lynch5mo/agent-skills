@@ -1,37 +1,49 @@
 # Runtime and Safety Details
 
-仅在遇到远程卷、容器工具、特殊路径、sidecar 配对或回收站问题时读取本文件。
+仅在远程卷、FUSE、路径字符、回收站边界问题或执行顺序需要核对时读取本文件。
 
-## 工具通道
+## 统一前提
 
-- 宿主机/Mac 可能没有 ffprobe。优先使用 jellyfin 容器内 `/usr/lib/jellyfin-ffmpeg/ffprobe`；镜像直跑时以 readonly bind mount 暴露媒体，不复制数据。
-- SSH/FUSE 场景先核对主机、挂载点和 uid。脚本化写操作经 `sudo -n python3 -` 传整段脚本，每次调用拆小块，防止 stream timeout。
-- 审计 JSON 先在远端生成，再拉回本地分析；不要把全库枚举结果塞进对话。
-- 含单引号、空格、Unicode 变体的路径不走 shell 字符串拼接；用 Python `os.scandir` 枚举和 `os.rename` 逐字处理。
+1. 任务动作仅在 `TASK_ROOT` 后代（canonical）内执行。
+2. 越界判定只用 `Path.resolve()` + 实体关系，不接受字符串前缀。
+3. 默认只做可逆 `mv`；除命名合同明确允许，禁止 `rm`、`rm -rf`、`rmdir`（`.DS_Store`、`._*` 除外）。
 
-## FUSE 与 Unicode
+## 初扫与快通道边界
 
-- 大卷禁用全树 `find`/`du`/`os.walk`；按国、导演或电影夹浅层分块扫。
-- 操作前用 `unicodedata.normalize('NFC', name)` 比对同名 NFC/NFD 变体；一律走数据所在实体路径。
-- FUSE 可能显示同 inode 双条目或幻影空壳。rename 后 stat 新路径确认实体存在；幻影清 `_trash_` 留证。
-- NFD 条目可能 scandir 可见但 join/stat/move 报 ENOENT；跳过记录，不重试轰炸。
+- 初扫只收路径、目录层级、文件名/类型、视频/NFO/字幕存在性、结构异常和目标碰撞所需信息。
+- 初扫禁止读 NFO 内容、跑 `ffprobe`、查 IMDb、算完整 hash、去重或深度归类；文件系统可枚举所有条目，但推理按同类模式和 10–20 项批次进行。
+- `NAMING_PASS` 只进入最终对账，不再读 NFO、跑 `ffprobe`/IMDb、算 hash、去重或深查。
+- `NAMING_READY` 只能从现有事实按合同做唯一语法变换；语义事实变化或不确定即为 `EXCEPTION`，进入慢通道。
+- 目标碰撞必须进入 `EXCEPTION`；不得临时加后缀、覆盖或改写锁定计划。
 
-## Sidecar 与字幕
+## 工具与执行
 
-- 改视频 basename 前 listdir 获取逐字真名，禁止手打猜测。
-- 视频改英文名后同步对齐同名 `.nfo` 和字幕；idx/sub 必须成对提级。
-- 子夹先提级内容再处理子夹，避免 Directory not empty。
-- 孤儿 `movie.nfo` 不动出报告；一夹多视频不自动配；zip 内可能是唯一字幕来源时先安全提取评估，再决定保留或回收。
-- 异版字幕不硬配，时间轴错位风险高，直接进回收站清单。
+- FUSE/远程场景：先确认 mount/uid/可写，再执行写动作。
+- `sudo` 仅用于明确授权与必要分批；先保证工作单与计划可写。执行前需排除 `_trash_*` 的临时目录影响，按 TASK_ROOT 内唯一可写隔离策略处理。
+- FFprobe、抽样 hash、长度/分辨率只作慢通道旁证，不替代 naming-contract 与实扫；完整 hash 仅用于目标碰撞形成的候选精确重复或异常完整性。
+- 系统性挂载或权限故障视为任务阻塞，不做猜测性继续执行。
 
-## 回收站与清场
+## FUSE、Unicode 与路径形态
 
-- 路径：`<媒体根>/_trash_<区域>_<YYYYMMDD>/<任务说明>/<导演>/<电影夹>/`，保留原层级便于回滚。
-- 白名单外项目整批 `mv` 进对应回收站；禁止 `rm`、`rm -rf`、`rmdir`、`rm -d`。
-- CD2/FUSE 对非空目录的 rmdir 可能递归转发云端删除，因此即使目录看似空也只用 `mv`。
-- 清完垃圾变空的夹留壳不删，报告中待裁决。
-- 不刷新 CD2 缓存、不重启 clouddrive 容器、不改其 sqlite。
+- 大卷禁止全树 `find/os.walk`；按 `TASK_ROOT` 子范围分块扫描。
+- 看到 `Errno 39`、双实体、路径不可达：只用 `os.scandir()` 返回实体做比对，不拼装 NFC/NFD 变体。
+- 可达性依据 `exists/stat/repr + bytes/hash`；`inode` 只在同卷稳定场景辅助，不作为唯一依据。
+- 单条动作失败按 `failure-handling.md` 的故障码处理，不做路径猜测重试。
 
-## 执行前检查
+## Sidecar、父目录与清场
 
-每项 rename/move 前核对：old exists、new absent、target parent exists、target name 与计划逐字一致、source/target 都不是幻影路径。幂等设计允许重复运行时零改动或安全跳过，但不允许覆盖。
+- `NAMING_READY` 先形成同一条 bundle：主视频、现有同 stem NFO（缺失则记录，不补造）、每个带语言标识字幕及电影夹/导演夹 old/new；身份不确定时不要在快通道猜配对。
+- 通过计划门禁后固定执行：**视频 → NFO/字幕 → 计划内 trash → 电影夹 → 导演夹**。子项现场复扫 PASS 后才改父目录。
+- 导演夹只有该导演全部受影响子项闭环、复扫 PASS 且目标不冲突时才允许改名；否则原地保留并报告。
+- 身份/配对不确定时，仅将 sidecar 及其单文件移入 `TASK_ROOT/_待确认_`（原结构与恢复路径），不拖拽整电影。
+- 回收统一到 `TASK_ROOT/_trash_<task-id>_<YYYYMMDD>/...`，并保持原相对路径；计划中必须预先锁定目标。合同已明确为垃圾的无语言字幕可直接按计划 `mv`，不得猜语言。
+- `_work-record_`、`_work-record_/recovery/`、`_待确认_`、`_trash_*` 均为可写且在任务内。
+
+## 执行前校验（逐条）
+
+1. `old exists`、`new absent`、`target parent exists`。
+2. `old/new` 与计划逐字一致，且同为 TASK_ROOT 后代。
+3. `bytes/hash`、sidecar 关系可追溯；每条有证据和回滚路径。
+4. 完整 hash 仅用于目标碰撞形成的候选精确重复或异常完整性确认。
+
+任一条件不满足不执行，并立即按对应故障卡处理后再继续明确项。

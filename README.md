@@ -35,7 +35,7 @@
 | `nas-management` | TrueNAS、Synology、SMB、NAS Git、恢复、同步和安全文件操作 |
 | `movie-library-controlled-ops` | NAS 个人电影库扫描、决策包、重复隔离、回滚与核验 |
 | `media-library-inventory` | 本地/NAS 媒体盘点、sidecar 分类、目录重叠与重复报告 |
-| `movie-organizing` | 杂乱电影库中性扫描、本批标准、三档分流、计划锁定与分批验证 |
+| `movie-organizing` | 无人值守杂乱电影库规范化（任务根锁定、阶段门禁、故障卡路由） |
 | `android-obsidian-self-hosted-git` | Android、Termux、Obsidian 复用同一 Vault、直接 Git、设备绑定与图谱策略 |
 | `android-termux-development` | Termux 软件安装、Python 包兼容、进程与 APK 管理 |
 | `hermes-desktop-troubleshooting` | macOS Hermes Desktop Electron/backend 启动与连接排障 |

@@ -1,132 +1,123 @@
 ---
 name: movie-organizing
 description: >-
-  批量整理杂乱电影库：先中性扫描并建立本批标准，再按明确、待查、冲突三档分流；
-  生成锁定的整批目标计划后分批执行和验证。继承 movie-folder-rename-cleanup
-  的命名规范与硬安全规则；无 NFO 是原始状态，不自动补造。
+  Use when a user asks an assistant to normalize a mixed or inconsistently
+  named movie library in unattended batches within an explicitly bounded
+  TASK_ROOT.
 license: MIT
 metadata:
-  version: "1.1"
+  version: "1.2.0"
   author: lynch5mo
-  tags: [media, movie-library, normalization, naming-convention, batch-plan]
-  trigger: User asks to normalize, rename, clean, or restructure a mixed or messy
-    movie library in batches, especially when files and folders are irregular,
-    some lack NFO metadata, or the applicable standard must be confirmed before
-    execution.
+  tags: [media, movie-library, batch-plan]
+  trigger: User asks to normalize a mixed movie library in batches.
 ---
 
 # Movie Organizing
 
-本 Skill 是杂乱电影库的批量规范化流程。[references/naming-contract.md](references/naming-contract.md) 是命名、冲突缺失、夹内容白名单和查证闭环的唯一权威，内容忠实复制自旧 [movie-folder-rename-cleanup](../movie-folder-rename-cleanup/SKILL.md) 第一部分；旧链接仅用于溯源，不是运行依赖。两者的差异是：旧 Skill 是定版规则手册，本 Skill 增加从混合输入推导“本批标准卡”、三档分流、计划锁定和分批执行的上下文控制。
+## 入口与故障路由
 
-## 固定合同（始终加载）
+异常先按 [failure-handling.md](references/failure-handling.md) 对应 B 码执行，不得先改文件。
 
-0. **在生成本批标准卡或任何目标名之前必须完整读取 `references/naming-contract.md`**。它是唯一命名权威；下方条目只是安全摘要，不得扩展、修改或替代该合同。
-1. 目录层级：`<媒体根>/<大洲>/<导演中文名 EnglishName>/<电影文件夹>/<文件>`。
-2. 导演夹用 `中文名 EnglishName`，单词间空格，禁点格式，如 `刁亦男 Yi'nan Diao`。
-3. 电影夹：`中文名.英文 Name.年份.尺寸.格式[.音轨]-发布组`，如 `太阳照常升起.The Sun Also Rises.2007.CHINESE.1080p.Blu.dts-fgt`。
-4. 视频文件：`English Name.年份.尺寸.格式-发布组.ext`，文件名不带中文。
-5. 英文名内部单词之间必须用空格；点只作段落分隔符。年份及之后 token 用点分隔。
-6. NFO 与视频 basename 完全一致。字幕为视频 basename + 小写语言标识 + 原扩展名；语言标识 `.zh/.chn/.chn0` 统一为 `.chs`，`.cht`、`.eng` 保持不变。
-7. 保持原大小写、release token 和发布组原样；不可考的发布组标 `Unk` 或省略。年份冲突时，目录用查证后的影片年份，视频文件保留 release 原始年份 token。年份、片名、归属、导演英文名不确定时进待查或单议，禁止猜名或补造元数据。
-8. 夹内白名单只有视频、同名 NFO、同 basename 语言字幕；其他媒体装饰件、安装件、广告、sample、老副本等移入 `_trash_`。`.DS_Store` 和 `._*` 直接删。
-9. 无 NFO 不是错误，也不阻塞整理；这是原始状态。不要生成占位 NFO、不要从文件名臆造 metadata，只把该项标记为 `no_nfo_ok` 并继续可用证据链。
-10. 删除永不使用 `rm/rm -rf/rmdir/rm -d`；清场一律 `mv` 进回收站。不覆盖目标，不跨夹猜配 NFO 或字幕，异版字幕宁可回收站。FUSE/NFC/NFD、单引号路径、SSH 分块等操作约束必须遵守。
-11. 每次真实变更前锁定计划；计划外发现立即停止受影响项，不复核不执行。
+| B码 | 场景 |
+|---|---|
+| B01 | 范围越界与越权路径 |
+| B02 | 阶段跳步或门禁缺失 |
+| B03 | 计划漂移与无效字段 |
+| B04 | 中断恢复 |
+| B05 | FUSE/挂载异常/双实体 |
+| B06 | 路径字符与实体可达性 |
+| B07 | 主视频身份误判 |
+| B08 | 重复与多版本误判 |
+| B09 | sidecar 失配 |
+| B10 | trash 冲突与可逆恢复 |
+| B11 | 权限或证据不可写 |
+| B12 | 报错重试策略错误 |
+| B13 | 假完成 |
+| B14 | 单项异常阻塞全任务 |
+| Bxx | 未识别故障 |
 
-## 流程
+## 核心硬约束（所有阶段共用）
 
-### 1. 长期基线
+1. `TASK_ROOT` 由用户明确提供并锁定；不得提升到父目录或跨任务根迁移。
+2. `TASK_ROOT` 本身不可改名、不可移动、不可删除。
+3. `source/target/trash/pending/work-record/evidence` 必须是 `TASK_ROOT` 的 canonical 后代（`Path.resolve()` + 实体关系），不允许字符串前缀判断。
+4. 每轮新任务必须完整读取 [naming-contract.md](references/naming-contract.md)，记录合同 hash 并形成标准卡版本。
+5. 全量仅维护 `TASK_ROOT/_work-record_/_整理工作单.md`（任务单唯一）及 `TASK_ROOT/_work-record_/recovery/`（证据写失败回退）。
+6. 除 naming-contract 明确允许的 `.DS_Store`、`._*` 外，处理动作默认只用可逆 `mv`，禁止 `rm`/`rmdir`。
+7. 系统性挂载或权限故障时标记阻塞并暂停，不扩大范围。
+8. `trash` 使用固定目录：`TASK_ROOT/_trash_<task-id>_<YYYYMMDD>/`，保留源相对结构。
 
-先确认长期标准来源：`references/naming-contract.md`、用户当次指令、库内既有达标样本。该合同的具体格式是硬基线；用户显式覆盖只能收窄或补充，不得违反禁覆盖、禁删除、禁造名等安全合同。没有可确认基线时先向用户要样例或裁决，不进入批量改名。
+## 固定顺序与阶段门禁
 
-### 2. 中性扫描
+前一阶段未 PASS，不得进入下一阶段。无人值守只表示明确项可自动推进，不表示可以猜测语义或跳过门禁。
 
-只读建立批次清单，不做判断性重命名。优先浅层 `os.scandir` 或等效 API，按大洲/导演分块；避免 FUSE 全树 `find/os.walk`。每条记录保留绝对路径、父目录、basename、扩展名、类型、大小、inode、NFC/NFD 形态、NFO/字幕伴生情况和明显异常。输出写到临时工作文件，主对话只放计数、分层样例和异常摘要。
+### 0. 任务根与恢复
 
-### 3. 输入模式统计
+- 锁定用户给出的 `TASK_ROOT`，核对 canonical 实体、挂载/FUSE、权限和路径可达性。
+- 读取唯一工作单并现场复扫未闭合批次；无工作单时建立一份。禁止用对话记忆续跑。
+- 系统性挂载、权限或证据不可写按 B05/B11 停止；单项异常按对应 B 卡隔离。
 
-把记录聚合成模式而不是逐条推理：
+### 1. 轻量文件名清单（只读）
 
-- 达标目录、达标视频、达标 NFO/字幕配对数量；
-- 点式导演/电影名、中文入视频名、年份缺失或冲突、发布组缺失；
-- 有 NFO、无 NFO、孤儿 NFO、多视频一 NFO；
-- 字幕同名、异版、子夹嵌套、idx/sub 成对或残缺；
-- 多版本、疑似重复、裸视频、身份不明件、NFC/NFD 双实体；
-- 白名单外文件类型和路径层级。
+- 在 `TASK_ROOT` 内分块枚举，排除 `_work-record_`、`_待确认_`、全部 `_trash_*` 及其子目录。
+- 只记录路径、目录层级、文件名/类型、视频/NFO/字幕存在性、结构异常以及目标碰撞所需信息。
+- 初扫明确禁止：读取 NFO 内容、运行 `ffprobe`、查 IMDb、计算完整 hash、去重或做深度身份/版本归类。文件系统可以枚举所有条目，但 Agent 只按同类模式和 10–20 项批次推理。
+- 此阶段不判垃圾、不建目录、不改名、不移动、不删除；大卷遵循 `os.scandir()` 分块规则。
 
-每个模式给计数和 1–3 个逐字路径样例；高频模式抽样验证，低风险一致模式可批量归入明确档。
+### 2. 完整命名合同
 
-### 4. 本批标准卡
+- 完整读取 [naming-contract.md](references/naming-contract.md)，锁定合同 hash、关键规则和本批 `standard_id`；不能用摘要或旧工作单替代。
+- 合同仍是唯一命名权威：导演夹、电影夹、视频、NFO、字幕 basename、语言标识、年份冲突、release 保留、白名单和 trash 规则均以该文件为准。
 
-根据长期合同加统计结果生成一页决策卡，字段固定：
+### 3. 命名快通道（三态）
 
-- 适用范围、批次边界、扫描快照 ID；
-- 识别为明确、待查、冲突的数量与判定条件；
-- 本批接受的 release token、音轨、发布组变体和无 NFO 处理方式；
-- 目标层级、回收站路径、执行块大小；
-- 需要用户拍板的例外和禁止自动处理的类型。
+先按命名语法判断状态，不把全库先放进 `明确/待查/冲突` 深分流：
 
-标准卡是后续分类的唯一基准。它不能新增命名格式，只能选择应用旧合同、标注不确定项或请求用户裁决。
+- `NAMING_PASS`：现名已经完全符合合同且无目标碰撞；无动作，立即退出深查，只进入最终对账。
+- `NAMING_READY`：只需语法规范化，且可由现有名称/目录事实和合同唯一生成目标；保留已有片名、年份、release token，不改变电影身份、导演、年份事实或归属，不触发三源查证。
+- `EXCEPTION`：身份、导演、年份、归属或主视频不明，特殊容器/结构，多版本或重复关系，Unicode/实体边界，sidecar 配对不明，或任何目标碰撞/不可逆风险。不得临时加后缀、覆盖或猜名。
 
-### 5. 三档分流
+命名快通道不读取 NFO 内容、不跑 `ffprobe`/IMDb、不算完整 hash、不做去重或深度归类；这些只属于后面的 `EXCEPTION` 慢通道。
 
-- **明确**：长期合同和标准卡都能唯一确定目标名或动作。直接进入计划，不需要额外网络查证或昂贵 ffprobe；已有可靠 NFO/路径/统计证据即可。
-- **待查**：缺少一个关键事实且可能通过夹内 NFO、ffprobe、IMDb suggestion 等低成本三源闭环解决。限制查证次数，仍不确定则升级单议。
-- **待查（夹名与实片不符）**：旧合同要求以视频实片为准重新查证；用夹内 NFO、ffprobe 和 IMDb suggestion 三源闭环后写入计划。任一源矛盾或仍不能唯一确定时升级为冲突。
-- **冲突**：多候选、多版本剪辑、重复、NFC/NFD 双实体、跨导演归属或任何安全歧义。原地不动，列证据等待用户拍板；不得为了推进批量而猜。
+### 4. Naming bundle 与 10–20 项锁定计划
 
-三档互不阻塞：异常项暂停并报告，明确项继续进入计划。
+对每个 `NAMING_READY` 项生成一条完整 bundle：导演夹 old/new、电影夹 old/new、主视频 old/new、现有 NFO old/new（无 NFO 显式记录缺失且不补造）、每个现有字幕 old/new、合同明确垃圾的 trash 映射、依据和回滚路径。任何缺项、歧义或目标碰撞都降为 `EXCEPTION`。
 
-### 6. 整批目标计划
+按一个导演或有限文件块生成 10–20 项原子计划并锁定 hash。计划级必须有 `scan_id/standard_id/plan_hash`；动作级必须有 `id/action/source/target/evidence/rollback/preconditions/postconditions`、`old exists`、`new absent` 和 canonical 后代证明。`trash_target` 仅用于 trash 动作，`content_hash` 仅用于精确重复或异常完整性；禁止 `sentinel`/`__KEEP__`/`__SKIP__`、`old==new`、重复目标和缺字段。
 
-为明确项生成完整计划，包含旧路径、新路径、动作、依据、回滚路径、预计字节数/inode 和验证要求。待查和冲突项单独成清单，不混入执行队列。计划表必须展示新名字的逐字字符；执行参数与计划表完全一致。用户批准或确认既定授权后锁定计划哈希，之后不得静默修改。
+### 5. 命名复扫与早退出
 
-### 7. 分批执行
+计划验核通过后，执行该批明确 bundle；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。子项复扫 PASS 后才允许改父目录。
 
-按导演、目录数或文件数切块，小块顺序执行；SSH/FUSE 每块保持小输出并在失败时停止该块。执行顺序：先改文件和 sidecar，最后改目录；移动前核对 old exists/new absent/target exists。所有移出物保层级进入 `_trash_<区域>_<YYYYMMDD>/<任务说明>/`。
+`NAMING_PASS` 项永远不回到深查：禁止继续读 NFO 内容、运行 `ffprobe`、查 IMDb、计算 hash、去重或深度归类；它只在最终终扫中计数。复扫失败按 B13/B04 处理，不以返回码代替现场验收。
 
-### 8. 每批验证
+### 6. 仅 EXCEPTION 进入慢通道
 
-每块结束立即验证：目标存在、旧路径消失或留壳符合约定、inode 不变、字节数不变、NFO/字幕 basename 对齐、非白名单残留为 0、回收站清单可逆。全部通过才进入下一块；失败块回滚或隔离到待裁决，不扩大影响。批次完成后汇总残留、无 NFO 数量、待查、冲突和回收站路径。
+- 只对 `EXCEPTION` 按 `明确/待查/冲突` 细分；快通道明确项不被异常项阻塞。
+- 仅在确有必要时读取 NFO 的 `title/originaltitle/year/director`、运行 `ffprobe` 核对时长/分辨率、查询 IMDb suggestion；三源互证后才能改变语义事实或生成新 bundle。
+- 完整 hash 只用于目标碰撞形成的候选精确重复或异常完整性确认；时长、分辨率或抽样 hash 不能裁决重复。差异版本保留并走冲突路径。
+- 慢通道闭环者回到 bundle/计划门禁；仍不闭环者仅将最小可逆单元移入 `TASK_ROOT/_待确认_` 或原地冻结。合同已明确为垃圾的无语言字幕直接按计划移入固定 trash，不猜语言。
 
-## 命名闭环硬门槛（2026-08-27）
+### 7. 终扫与报告
 
-- 电影夹名、主视频 release stem、字幕 basename、NFO basename 必须作为**同一条命名合同记录**生成和执行；禁止先独立改电影夹、再用另一批脚本猜视频文件名。
-- 每个普通影片计划必须逐字列出 `old_film_dir -> new_film_dir`、`old_video -> new_video`、每个 sidecar/NFO 的目标名；任何目标名未锁定、由启发式猜测或只写了父目录的项目都不得进入执行队列。
-- 计划生成后，必须对目标快照运行严格合同校验；以下任一普通项仍存在就阻止执行或收口：`film_name_not_primary_stem`、已知年份却 `film_no_year`、`video_internal_title_dots`、`chinese_in_video`、`subtitle_missing_language_suffix`、`subtitle_not_primary_stem`。年份/片名/导演不确定时应进入 `待查/冲突`，不能用 allowlist 掩盖。
-- `MULTI_VIDEO`、DVD/蓝光、BDMV/CERTIFICATE、合集和其它特殊容器只能逐路径给出结构理由后例外；例外只豁免结构，不豁免同一夹内已经明确的普通文件名错误。
-- 去重、结构整理和命名规范化必须分开验收；去重完成不代表命名合规，问题数下降也不代表国家闭合。
-- 每批执行后必须从最终现场路径重新生成合同复核；只要仍有可自动确定的普通命名问题，国家状态保持 `OPEN`，不得进入下一个国家。
-- 若同一计划先改子文件、后改父电影夹，验证器必须把子文件的旧目标路径重定位到最终父目录后再检查；不得把父目录改名后的旧路径不存在误报为执行失败。
-- 执行器在任何媒体变更前必须检查计划、manifest、回滚证据路径可写；发现旧 root-owned 证据文件时，必须改用新的唯一证据路径或先修复权限，禁止先执行后补证据。
+全量复扫仍排除 `_work-record_`、`_待确认_`、全部 `_trash_*` 媒体内容，但最终统计必须包含三类控制目录。输出 `主任务已规范化，待确认 N项`；仅当 `待确认=0` 且终扫 PASS，才可输出 `全部完成（待确认=0且终扫PASS）`。
 
-## 计划外新模式
+## 执行顺序（硬规则）
 
-执行中发现未登记的新模式时：
+通过计划门禁后，固定按同一 bundle 执行：**视频 → NFO/字幕 → 计划内 trash → 电影夹 → 导演夹**。每条记录 `old/new/bytes/sidecar/证据路径`；任何执行中发现的新事实都停止受影响项并按 B 卡处理，不临场改计划。
 
-1. 只暂停包含该模式的异常项；
-2. 把模式、逐字样例、影响范围写入批次标准卡更新记录；
-3. 判定已锁定但未执行的计划是否需要复核；
-4. 已执行部分照常验证，不受新模式阻塞；
-5. 用户批准更新后的标准与计划后再恢复相关项。
+导演夹只有在该导演全部受影响子项都已闭环、复扫 PASS 且目标不冲突时才允许最后改名；否则保留原夹并报告。所有 trash/pending 均保留原相对结构并留可逆证据。
 
-## 渐进披露
+## 中断、分类与回收
 
-只在对应情况读取，正常批次不要一次加载全部参考：
+- 中断恢复先现场复扫并按 B04 对齐 `未执行/已执行/部分执行`；已 `NAMING_PASS` 项不重新深查，未闭合 bundle 或部分执行项只从未完成动作恢复。
+- `明确` 是身份/sidecar/目标已闭环；`待查` 是仍可低成本核验；`冲突` 是多候选、归属/版本/边界或不可逆风险。`待确认` 只接收最小完整单元并保留恢复路径。
+- 普通任务不重新扫描 `_待确认_`；只有用户明确要求处理该目录时才重开范围。所有异常先按 `failure-handling.md` 的 B 码，不以工具报错替代媒体冲突。
 
-- FUSE、SSH、ffprobe、回收站、特殊路径操作：[references/runtime-and-safety.md](references/runtime-and-safety.md)。
-- 多版本、重复、NFC/NFD、裸视频、无中文片名等疑难分流：[references/triage-and-edge-cases.md](references/triage-and-edge-cases.md)。
-- 需要历史事故背景或防回归检查表时：[references/lessons-and-audit-checklist.md](references/lessons-and-audit-checklist.md)。
+## 参考
 
-旧 Skill 第八部分的战例属于背景资料；除非用于解释当前同类异常，不要复制进批次上下文。
-
-## 追加教训（2026-08-26 法国库收尾批次）
-
-- **目录改名 Errno 39 幻影**：源目录文件已全部移出后 rename 报 Directory not empty 是 FUSE 幻影；先 listdir 确认为空，再单独 mv 空壳进回收站即可成功。
-- **孤立导演单部影片**：按"仅 1 部不强造导演夹"先例处理；但若用户明确批复"新建夹归位"，则新建 `中文名 EnglishName` 夹合法。
-- **2025 新片三源闭环实操**：NFO tt 号 → IMDb suggestion 反查英文标题 → TMDb find API 取 zh-CN 标题/制片国家/导演 credits（TMDb 公开演示 key 可用于查询）。
-- **中文发布组名**：用户裁决可舍弃组名或转拼音缩写（弯弯→WW）；低画质重复版直接回收优于改名保留。
-- **短片容器结构偏好**：欧容短片容器用户倾向保留容器形态而非全部提级；提级前需问。
-- **同片双夹先 SHA1 全量比对再裁决**：欧容 11 对"DVD 版 vs 发布组版"全部 SAME，证明是改名复制副本；ffprobe 时长/尺寸一致只是旁证，SHA 才是定案证据。
-- **禁止哨兵目标名与重复目的地**：`__KEEP__`、`__SKIP__` 等只能表示“不改名”，绝不能进入 rename 目标；不改名项目必须从计划中省略。生成计划时必须断言所有目的地唯一，执行前必须拒绝任何会覆盖既有目标的 `os.rename`，不能用幂等逻辑掩盖目的地冲突。
+- [naming-contract.md](references/naming-contract.md)
+- [runtime-and-safety.md](references/runtime-and-safety.md)
+- [triage-and-edge-cases.md](references/triage-and-edge-cases.md)
+- [failure-handling.md](references/failure-handling.md)
+- [lessons-and-audit-checklist.md](references/lessons-and-audit-checklist.md)
