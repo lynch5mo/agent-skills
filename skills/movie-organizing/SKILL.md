@@ -6,7 +6,7 @@ description: >-
   TASK_ROOT.
 license: MIT
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   author: lynch5mo
   tags: [media, movie-library, batch-plan]
   trigger: User asks to normalize a mixed movie library in batches.
@@ -121,3 +121,63 @@ metadata:
 - [triage-and-edge-cases.md](references/triage-and-edge-cases.md)
 - [failure-handling.md](references/failure-handling.md)
 - [lessons-and-audit-checklist.md](references/lessons-and-audit-checklist.md)
+
+## v1.3 实操补充（2026-08-28 捷克库实测）
+
+以下规则从捷克库（CIFS/NAS 大批量混合库）实操中总结，是对上述阶段门禁的补充，不替代任何硬约束。
+
+### 导演夹间隔号合规
+
+导演夹中 `·`（U+00B7 MIDDLE DOT，中文间隔号）是外国人名的标准排版惯例，不属于合同"禁点格式"所禁止的 `.`（句点/英文点）。合同示例 `刁亦男 Yi'nan Diao` 是中文名无需间隔号的情况；外文名导演夹使用 `中文名·英文名` 格式合规，不需要改为空格。
+
+### 括号式→点式自动转换
+
+大量电影夹使用 `中文名 英文名 (年份)` 格式，需转为合同格式 `中文名.英文 Name.年份`。转换规则：
+
+1. 从同目录视频文件名提取英文名（正则 `^([A-Za-z].+?)\.(\d{4})\.` 或 `^([A-Za-z].+?)\s+(\d{4})\s`）。
+2. 提取的英文名中的 `.` 替换为空格（保留年份后的点分隔）。
+3. 无法从视频文件提取英文名的，标为 `EXCEPTION` 待查，不猜名。
+4. 转换后验证：新目录不存在、旧目录存在、同级无碰撞。
+
+### 中文视频文件名清理
+
+视频文件名中不应有中文。处理方式：
+
+1. 用正则 `^([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef、·]+)\.(.+)$` 分离中文前缀和英文/原文部分。
+2. 保留英文/原文部分，将 `.` 替换为空格（年份及之后保持点分隔）。
+3. 若中文前缀后是空格分隔的英文（模式2），直接去掉中文前缀。
+4. 无法分离的标为 `EXCEPTION`。
+
+### CIFS/大小写双目录
+
+在 CIFS 挂载的 NAS 上，仅大小写不同的目录名（如 `LiMITED` vs `LIMITED`）可能同时存在（inode 不同）。`mv` 会失败（"设备或资源忙"）。处理方式：
+
+1. 检测两个目录是否同时存在且内容相同（字节比对）。
+2. 若相同，视为 CIFS 大小写伪影，跳过并标记为冲突。
+3. 若不同，保留内容更完整/质量更高的版本，另一个进 trash。
+
+### 特殊容器处理
+
+`DVD/`、`蓝光/`、`短片/`、`纪录片/`、`访谈花絮/`、`长片/`、`BFI Complete Shorts/` 等是非标准结构容器，不按普通电影夹处理：
+
+1. 内有视频文件的：提取英文名，为每部电影创建独立 film folder 并移入。
+2. 空目录：直接删除（递归从深到浅）。
+3. 含子目录的：逐个检查子目录内容，按上述规则处理。
+4. 访谈花絮中的其他导演作品：标为 `EXCEPTION`，不移入当前导演夹。
+
+### 重复版本保留策略
+
+同一影片多个版本（不同编码/分辨率/来源）按以下策略处理：
+
+1. 先比对文件大小和 SHA1（至少比对文件大小）。
+2. 大小不同 → 不同编码/来源，均保留，标为 `冲突`。
+3. 大小相同 → 可能是复制副本，需 SHA1 确认。
+4. 差异版本保留在原位，不合并、不删除，在工作单中记录所有版本的路径和大小。
+
+### 年份冲突三源验证
+
+目录年份与视频 release 年份不一致时：
+
+1. 使用 IMDb suggestion API `https://v2.sg.media-imdb.com/suggestion/x/<关键词>.json` 查证。
+2. 确认正确年份后，**目录**改为查证年份，**视频文件**保留 release 原始年份 token（合同规则）。
+3. 无法确认的标为 `EXCEPTION` 冻结。
