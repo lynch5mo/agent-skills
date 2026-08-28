@@ -1,29 +1,18 @@
 ---
 name: movie-organizing
 description: >-
-  Use when a user asks an assistant to normalize or deduplicate a mixed,
-  inconsistently named, orphaned, dispersed, or collection-based movie library
-  within an explicitly bounded TASK_ROOT.
+  Use when a user asks an assistant to normalize a mixed or inconsistently
+  named movie library in unattended batches within an explicitly bounded
+  TASK_ROOT.
 license: MIT
 metadata:
   version: "1.3.0"
   author: lynch5mo
   tags: [media, movie-library, batch-plan]
-  trigger: User asks to normalize, rehome, deduplicate, or quality-select a mixed movie library in batches.
+  trigger: User asks to normalize a mixed movie library in batches.
 ---
 
 # Movie Organizing
-
-## 最高优先核心职责（CORE）
-
-对 `TASK_ROOT` 内每个视频单元，必须依次完成并现场核验四项核心职责；扫描、计划、普通清理或报告都不能替代它们：
-
-1. 所有保留影片的导演夹、电影夹、视频及现有 NFO/字幕均按 [naming-contract.md](references/naming-contract.md) 逐字规范命名；缺失 NFO 显式记录，不补造。
-2. 每个孤立视频必须创建缺失的标准导演夹/电影夹，并把视频及其 sidecar 放入标准路径。
-3. 每个分散影片或合集影片必须逐片确定所属导演，归入（或创建）正确的标准导演夹和电影夹。
-4. 核心命名与归类通过 `CORE_GATE` 后，按影片身份及同一 edition/cut 分组去重，只保留证据支持的更高质量副本。
-
-`CORE_GATE` 未通过时，不得说“完成”或“已规范化”；active CORE 与 active DEDUPE、普通垃圾清理和终扫均通过但有待确认项时，只能说“主目录四项核心整理已完成，待确认 N项”。只有待确认=0 且全部门禁与终扫通过，才可说“全部整理完成”。
 
 ## 入口与故障路由
 
@@ -80,31 +69,25 @@ metadata:
 - 完整读取 [naming-contract.md](references/naming-contract.md)，锁定合同 hash、关键规则和本批 `standard_id`；不能用摘要或旧工作单替代。
 - 合同仍是唯一命名权威：导演夹、电影夹、视频、NFO、字幕 basename、语言标识、年份冲突、release 保留、白名单和 trash 规则均以该文件为准。
 
-### 3. 命名快通道（状态与 expected 路径）
+### 3. 命名快通道（三态）
 
-先为每个视频单元计算并写入工作单，再按路径事实判断状态，不把全库先放进 `明确/待查/冲突` 深分流。至少记录：
+先按命名语法判断状态，不把全库先放进 `明确/待查/冲突` 深分流：
 
-- `expected_director_dir`、`expected_movie_dir`、`expected_video_path`；
-- 现有 NFO 的 `expected_nfo_path`（缺失也记录）和每个字幕的 `expected_subtitle_paths`；
-- `source_shape`：`standard`、`orphan`、`dispersed` 或 `collection`。
-
-这些字段必须在分类前生成，且基于命名合同、已闭环的身份/导演/年份/release 事实；缺失 NFO/字幕要明确记录缺失，不能用占位动作代替，字段缺失不得进入计划。
-
-- `NAMING_PASS`：仅当所有存在的导演夹、电影夹、视频、NFO、字幕的**实际路径逐字等于对应 expected 路径**，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无目标碰撞；无动作，立即退出深查，只进入 `CORE_GATE` 对账。不得凭“看起来规范”自报。
-- `ACTION_REQUIRED`：目标唯一但需要合同规定的语法规范化，或 `source_shape` 为 `orphan`、`dispersed`、`collection`，或缺失标准目录；必须按计划创建目录、改名并 rehome，不能当作无动作通过。纯语法动作仍须生成完整 bundle，不改变电影身份、导演、年份事实或 release token。
+- `NAMING_PASS`：现名已经完全符合合同且无目标碰撞；无动作，立即退出深查，只进入最终对账。
+- `NAMING_READY`：只需语法规范化，且可由现有名称/目录事实和合同唯一生成目标；保留已有片名、年份、release token，不改变电影身份、导演、年份事实或归属，不触发三源查证。
 - `EXCEPTION`：身份、导演、年份、归属或主视频不明，特殊容器/结构，多版本或重复关系，Unicode/实体边界，sidecar 配对不明，或任何目标碰撞/不可逆风险。不得临时加后缀、覆盖或猜名。
 
-命名快通道不读取 NFO 内容、不跑 `ffprobe`/IMDb、不算完整 hash、不做去重或深度归类；查证只属于 `EXCEPTION` 慢通道，去重只属于 `CORE_GATE` 之后的 DEDUPE 阶段。
+命名快通道不读取 NFO 内容、不跑 `ffprobe`/IMDb、不算完整 hash、不做去重或深度归类；这些只属于后面的 `EXCEPTION` 慢通道。
 
 ### 4. Naming bundle 与 10–20 项锁定计划
 
-对每个 `ACTION_REQUIRED` 视频单元生成一条完整 bundle：`expected_*`、`source_shape`、导演夹 old/new、电影夹 old/new、主视频 old/new、现有 NFO old/new（无 NFO 显式记录缺失且不补造）、每个现有字幕 old/new、必要 `mkdir`/`rehome`、合同明确垃圾的预锁映射（此处只记录，不提前执行）、依据和回滚路径。任何缺项、歧义或目标碰撞都降为 `EXCEPTION`。
+对每个 `NAMING_READY` 项生成一条完整 bundle：导演夹 old/new、电影夹 old/new、主视频 old/new、现有 NFO old/new（无 NFO 显式记录缺失且不补造）、每个现有字幕 old/new、合同明确垃圾的 trash 映射、依据和回滚路径。任何缺项、歧义或目标碰撞都降为 `EXCEPTION`。
 
-按一个导演或有限文件块生成 10–20 个视频单元的原子计划并锁定 hash。计划级必须有 `scan_id/standard_id/plan_hash`；公共动作字段必须有 `id/action/target/evidence/rollback/preconditions/postconditions`；`rename`/`rehome`/`trash` 另必须有 `source`，`mkdir` 不设置伪 `source`，只要求锁定 target 不存在且为 canonical `TASK_ROOT` 后代。改名/rehome 要求 `old exists`、`new absent`；回滚不得 `rmdir`，任务创建的空目录只能可逆 `mv` 到本任务 trash。`trash_target` 仅用于后续 trash 动作，`content_hash` 仅用于去重证据；禁止 `sentinel`/`__KEEP__`/`__SKIP__`、`old==new`、重复目标和缺字段。
+按一个导演或有限文件块生成 10–20 项原子计划并锁定 hash。计划级必须有 `scan_id/standard_id/plan_hash`；动作级必须有 `id/action/source/target/evidence/rollback/preconditions/postconditions`、`old exists`、`new absent` 和 canonical 后代证明。`trash_target` 仅用于 trash 动作，`content_hash` 仅用于精确重复或异常完整性；禁止 `sentinel`/`__KEEP__`/`__SKIP__`、`old==new`、重复目标和缺字段。
 
 ### 5. 命名复扫与早退出
 
-计划验核通过后，按形态执行该批明确 bundle：**必要目标目录（计划内 mkdir）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 导演夹定位/改名 → 现场复扫**。对已有容器仍坚持子项先、父目录后；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。每个执行项必须证明 old path 已消失、new path 已存在且逐字等于 expected path；子项复扫 PASS 后才允许改父目录。此序列不执行普通 trash。
+计划验核通过后，执行该批明确 bundle；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。子项复扫 PASS 后才允许改父目录。
 
 `NAMING_PASS` 项永远不回到深查：禁止继续读 NFO 内容、运行 `ffprobe`、查 IMDb、计算 hash、去重或深度归类；它只在最终终扫中计数。复扫失败按 B13/B04 处理，不以返回码代替现场验收。
 
@@ -112,40 +95,18 @@ metadata:
 
 - 只对 `EXCEPTION` 按 `明确/待查/冲突` 细分；快通道明确项不被异常项阻塞。
 - 仅在确有必要时读取 NFO 的 `title/originaltitle/year/director`、运行 `ffprobe` 核对时长/分辨率、查询 IMDb suggestion；三源互证后才能改变语义事实或生成新 bundle。
-- `CORE_GATE` 前，完整 hash 仅用于目标碰撞形成的候选精确重复或异常完整性确认；时长、分辨率或抽样 hash 不能裁决重复。去重必须等核心门通过后按下一阶段执行。
-- 慢通道闭环者回到 bundle/计划门禁；仍不闭环者必须将最小完整电影单元移入 `TASK_ROOT/_待确认_` 并保留来源/恢复路径。若系统故障无法移动，只能原地冻结且 `CORE_GATE` 必须失败，不能把冻结项算作通过。合同已明确为垃圾的无语言字幕在普通清理阶段按预锁 trash 处理，不猜语言。
+- 完整 hash 只用于目标碰撞形成的候选精确重复或异常完整性确认；时长、分辨率或抽样 hash 不能裁决重复。差异版本保留并走冲突路径。
+- 慢通道闭环者回到 bundle/计划门禁；仍不闭环者仅将最小可逆单元移入 `TASK_ROOT/_待确认_` 或原地冻结。合同已明确为垃圾的无语言字幕直接按计划移入固定 trash，不猜语言。
 
-### 7. CORE_GATE（命名与归类门禁）
+### 7. 终扫与报告
 
-命名批次完成后必须全量复扫并计算以下 active 计数，全部为 `0` 才能通过 `CORE_GATE`：
-
-`active_nonconforming_director_dirs`、`active_nonconforming_movie_dirs`、`active_nonconforming_video_files`、`active_nonconforming_nfo_files`、`active_nonconforming_subtitle_files`、`active_orphan_videos`、`active_collection_containers_with_videos`、`active_misfiled_movie_dirs`、`required_actions_remaining`、`partial_bundles`、`unaccounted_video_units`。
-
-每个执行项还必须有 `old absent + new exists + expected path exact`。系统故障、权限故障或无法移动导致旧项仍在 active media tree 时，门禁失败；原地冻结不能把计数伪装为归零。未闭环的最小完整电影单元必须移入 `TASK_ROOT/_待确认_` 并在工作单中有来源/恢复路径，不能留在 active tree 后算通过。
-
-已安全完整移入 `_待确认_` 且有完整 pending 目标、来源和恢复记录的单元标记为 `accounted_pending`：不计入 active 违规项，也不计入 `unaccounted_video_units`。`unaccounted_video_units` 只统计既没有 active 最终路径、也没有完整 pending 记录的单元；仍留在 active tree 的旧项或未执行动作一律使 CORE_GATE 失败。
-
-### 8. DEDUPE_GATE（去重门禁）
-
-仅在 `CORE_GATE=PASS` 后进入去重；`DEDUPE_GATE` 只核 active media tree（排除 `_待确认_` 与全部 `_trash_*` 媒体内容），普通清理不得提前。先按影片身份分组，再确认同一 `edition/cut`；不同剪辑、版本、内容不得合并。质量排序只接受可验证证据：`4K > 1080p > 720p`，同分辨率再比较可验证码率/画质；不得仅凭文件名或文件大小裁决。完全一致的精确重复须以完整文件 hash 与清单一致确认。
-
-质量唯一胜出者保留，较差副本只可逆 `mv` 到固定 `TASK_ROOT/_trash_<task-id>_<YYYYMMDD>/`，保留原相对路径、证据和回滚；证据不闭环、时长/版本有实质差异或质量无法唯一排序时，若候选组可安全整体隔离则移入 `_待确认_`，记录 `pending_duplicate_groups`，不得自动淘汰。候选组留在 active tree 时 DEDUPE_GATE 失败；整体隔离后不阻塞其他 active 影片继续去重、普通清理和终扫。
-
-以下 active 计数全部为 `0` 才能通过 `DEDUPE_GATE`：`unresolved_duplicate_groups_in_active_tree`、`inferior_copies_remaining_in_active_tree`、`dedupe_actions_remaining`、`partial_dedupe_actions`。`pending_duplicate_groups` 仅用于报告，不阻塞其他 active 影片继续，但待确认>0 时永远不能报告全部整理完成。系统故障导致候选仍在 active tree 时，`unresolved_duplicate_groups_in_active_tree` 非零，门禁失败。
-
-无法裁决的重复关系整体移入 `_待确认_` 后不计入 active DEDUPE 计数，但必须记录 `pending_duplicate_groups` 与来源/恢复证据。
-
-### 9. 普通清理、终扫与报告
-
-`DEDUPE_GATE=PASS` 后，才执行命名合同已明确的普通垃圾 trash（以及允许直接删除的 `.DS_Store`、`._*`），使用预锁 `trash_target`、固定 trash 根和可逆证据；这一步不能反向修改核心路径。
-
-全量复扫仍排除 `_work-record_`、`_待确认_`、全部 `_trash_*` 媒体内容，但最终统计必须包含三类控制目录。若 active CORE、active DEDUPE、普通清理和终扫均 PASS 但待确认>0，只能输出 `主目录四项核心整理已完成，待确认 N项`；仅当待确认=0、`CORE_GATE=PASS`、`DEDUPE_GATE=PASS`、上述普通清理完成、终扫 PASS 且无残留 required/partial/unaccounted 计数时，才可输出 `全部整理完成（待确认=0且终扫PASS）`。
+全量复扫仍排除 `_work-record_`、`_待确认_`、全部 `_trash_*` 媒体内容，但最终统计必须包含三类控制目录。输出 `主任务已规范化，待确认 N项`；仅当 `待确认=0` 且终扫 PASS，才可输出 `全部完成（待确认=0且终扫PASS）`。
 
 ## 执行顺序（硬规则）
 
-通过计划门禁后，固定按同一 bundle 执行：**必要目标目录（计划内 mkdir）→ 视频 → NFO/字幕 → 电影夹定位/改名 → 导演夹定位/改名 → 现场复扫**；`CORE_GATE` 通过后才允许 **去重 → `DEDUPE_GATE` → 普通 trash/清理 → 终扫**。每条记录 `old/new/bytes/sidecar/expected path/证据路径`；任何执行中发现的新事实都停止受影响项并按 B 卡处理，不临场改计划。
+通过计划门禁后，固定按同一 bundle 执行：**视频 → NFO/字幕 → 计划内 trash → 电影夹 → 导演夹**。每条记录 `old/new/bytes/sidecar/证据路径`；任何执行中发现的新事实都停止受影响项并按 B 卡处理，不临场改计划。
 
-导演夹只有在该导演全部受影响子项都已闭环、复扫 PASS 且目标不冲突时才允许最后改名；否则若旧夹/影片单元仍在 active tree，`CORE_GATE` 必须失败；可安全隔离时将最小完整单元移入 `_待确认_` 后主目录继续。所有 trash/pending 均保留原相对结构并留可逆证据。
+导演夹只有在该导演全部受影响子项都已闭环、复扫 PASS 且目标不冲突时才允许最后改名；否则保留原夹并报告。所有 trash/pending 均保留原相对结构并留可逆证据。
 
 ## 中断、分类与回收
 
@@ -163,11 +124,11 @@ metadata:
 
 ## v1.3 实操补充（2026-08-28 捷克库实测）
 
-以下规则从捷克库（CIFS/NAS 大批量混合库）实操中总结，是对上述阶段门禁的补充，不替代任何硬约束；命名合同、ACTION_REQUIRED bundle、CORE_GATE/DEDUPE_GATE 与可逆安全边界始终优先。
+以下规则从捷克库（CIFS/NAS 大批量混合库）实操中总结，是对上述阶段门禁的补充，不替代任何硬约束。
 
 ### 导演夹间隔号合规
 
-导演夹中 `·`（U+00B7 MIDDLE DOT，中文间隔号）是外国人名的标准排版惯例，且不同于合同“禁点格式”所禁止的 ASCII `.`（句点/英文点）；但当前命名合同明确要求导演夹 `中文名 EnglishName`（空格式、禁点格式），所以 `中文名·英文名` 只能作为实操库事实记录，不能据此 `NAMING_PASS`，必须按 `ACTION_REQUIRED` 规范为空格格式或进入 `EXCEPTION`/`_待确认_`。
+导演夹中 `·`（U+00B7 MIDDLE DOT，中文间隔号）是外国人名的标准排版惯例，不属于合同"禁点格式"所禁止的 `.`（句点/英文点）。合同示例 `刁亦男 Yi'nan Diao` 是中文名无需间隔号的情况；外文名导演夹使用 `中文名·英文名` 格式合规，不需要改为空格。
 
 ### 括号式→点式自动转换
 
@@ -193,25 +154,25 @@ metadata:
 
 1. 检测两个目录是否同时存在且内容相同（字节比对）。
 2. 若相同，视为 CIFS 大小写伪影，跳过并标记为冲突。
-3. 若不同，先保留并记录候选；仅在 `CORE_GATE=PASS` 后按影片身份与同一 `edition/cut` 进入 `DEDUPE_GATE`，有可验证质量唯一胜出者时才将较差副本可逆移入固定 trash，不能凭目录内容或文件大小直接回收。
+3. 若不同，保留内容更完整/质量更高的版本，另一个进 trash。
 
 ### 特殊容器处理
 
 `DVD/`、`蓝光/`、`短片/`、`纪录片/`、`访谈花絮/`、`长片/`、`BFI Complete Shorts/` 等是非标准结构容器，不按普通电影夹处理：
 
 1. 内有视频文件的：提取英文名，为每部电影创建独立 film folder 并移入。
-2. 空目录：仅在 `DEDUPE_GATE=PASS` 且计划已预锁固定 trash 目标后可逆 `mv` 到任务 trash；禁止直接递归删除（`.DS_Store`/`._*` 仍按合同例外处理）。
+2. 空目录：直接删除（递归从深到浅）。
 3. 含子目录的：逐个检查子目录内容，按上述规则处理。
-4. 访谈花絮中的其他导演作品：标为 `EXCEPTION`，将最小完整单元移入 `_待确认_`，不移入当前导演夹；仅系统故障导致不可移动时原地冻结且 CORE_GATE 失败。
+4. 访谈花絮中的其他导演作品：标为 `EXCEPTION`，不移入当前导演夹。
 
 ### 重复版本保留策略
 
 同一影片多个版本（不同编码/分辨率/来源）按以下策略处理：
 
-1. 先比对文件大小和 SHA1（至少比对文件大小），但大小只作筛选，不能单独裁决重复或质量。
-2. 大小不同 → 不能据此判为不同内容或淘汰，先均保留并标为 `冲突`，按身份/`edition/cut` 复核。
-3. 大小相同 → 仅说明可能是复制副本；`DEDUPE_GATE` 后仍需完整 hash 与清单一致确认。
-4. 差异版本不自动合并或删除；候选组可安全整体隔离时移入 `_待确认_` 并记录 `pending_duplicate_groups`，否则留在 active tree 使 DEDUPE_GATE 失败，工作单记录所有路径和大小。
+1. 先比对文件大小和 SHA1（至少比对文件大小）。
+2. 大小不同 → 不同编码/来源，均保留，标为 `冲突`。
+3. 大小相同 → 可能是复制副本，需 SHA1 确认。
+4. 差异版本保留在原位，不合并、不删除，在工作单中记录所有版本的路径和大小。
 
 ### 年份冲突三源验证
 
@@ -219,4 +180,4 @@ metadata:
 
 1. 使用 IMDb suggestion API `https://v2.sg.media-imdb.com/suggestion/x/<关键词>.json` 查证。
 2. 确认正确年份后，**目录**改为查证年份，**视频文件**保留 release 原始年份 token（合同规则）。
-3. 无法确认的标为 `EXCEPTION`，将最小完整单元移入 `_待确认_`；仅系统故障导致不可移动时原地冻结且 CORE_GATE 失败。
+3. 无法确认的标为 `EXCEPTION` 冻结。
