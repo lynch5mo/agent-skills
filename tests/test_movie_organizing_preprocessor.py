@@ -408,6 +408,34 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             self.assertIn("hash", result["error_summary"])
             self.assertTrue(video.exists())
 
+    def test_standard_folder_with_nested_container_is_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            (src_dir / "BDMV" / "STREAM").mkdir(parents=True)
+            self._make(src_dir, "BDMV/STREAM/00001.m2ts")
+            plan = self._plan(root)
+            bundle = next(
+                item
+                for item in plan["bundles"]
+                if Path(item["source_movie_dir"]).resolve() == src_dir.resolve()
+            )
+            self.assertEqual("EXCEPTION", bundle["status"])
+            self.assertIn("container", bundle["exception"].lower())
+            self.assertTrue((src_dir / "Movie.2020.1080p.WEB-DL.x264-RLS.mkv").exists())
+
+    def test_standard_folder_conflicting_video_chinese_prefix_is_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "另一片.Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            bundle = self._find_bundle(plan, video.stem)
+            self.assertEqual("EXCEPTION", bundle["status"])
+            self.assertIn("conflicting", bundle["exception"].lower())
+            self.assertTrue(video.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -200,6 +200,17 @@ def _find_same_stem_nfo(parent: Path, stem: str) -> Optional[Path]:
     return None
 
 
+def _has_child_directory(parent: Path) -> bool:
+    """Detect containers/collections without reading their contents."""
+
+    try:
+        entries = os.scandir(parent)
+    except OSError:
+        return True
+    with entries as iterator:
+        return any(entry.is_dir(follow_symlinks=False) for entry in iterator)
+
+
 def _collect_sidecars(
     parent: Path, source_video: Path, source_stem: str, target_stem: str, target_dir: Path
 ) -> List[Dict[str, str]]:
@@ -328,8 +339,17 @@ def _build_bundle(parent: Path, videos: Sequence[Path], task_root: Path) -> Dict
     cn_from_nfo = _read_nfo_chinese(nfo_path) if nfo_path else ""
 
     if is_standard:
+        if _has_child_directory(parent):
+            return _empty_bundle(
+                parent,
+                video,
+                "collection",
+                "special/container subdirectory present; keep DVD/BDMV/collection for Agent",
+            )
         if dir_year != parsed["year"]:
             return _empty_bundle(parent, video, source_shape, "year mismatch between directory and video")
+        if cn_from_video and cn_from_video != cn_from_dir:
+            return _empty_bundle(parent, video, source_shape, "conflicting Chinese title sources")
         chinese_title = cn_from_dir
         location = parent.parent
     else:
