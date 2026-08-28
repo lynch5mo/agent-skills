@@ -6,7 +6,7 @@ description: >-
   within an explicitly bounded TASK_ROOT.
 license: MIT
 metadata:
-  version: "1.3.1"
+  version: "1.3.2"
   author: lynch5mo
   tags: [media, movie-library, batch-plan]
   trigger: User asks to normalize, rehome, deduplicate, or quality-select a mixed movie library in batches.
@@ -81,6 +81,40 @@ metadata:
 - 合同仍是唯一命名权威：导演夹、电影夹、视频、NFO、字幕 basename、语言标识、年份冲突、release 保留、白名单和 trash 规则均以该文件为准。
 
 ### 3. 命名快通道（状态与 expected 路径）
+
+#### 3.0 自动前置预处理（硬规则，必须先做）
+
+在 Agent 对普通命名项作任何语义推理、手写 `mv` 或分类前，必须运行随 Skill 提供的标准库脚本
+`skills/movie-organizing/scripts/movie_organizing_preprocessor.py`，并严格完成 **plan/dry-run → safe apply → verify**：
+
+```bash
+# SKILL_DIR 是已安装的 movie-organizing 目录；仓库开发时可设为
+# /.../agent-skills/skills/movie-organizing，不依赖当前 shell 的 cwd。
+SKILL_DIR="/path/to/movie-organizing"
+SCRIPT="$SKILL_DIR/scripts/movie_organizing_preprocessor.py"
+python3 "$SCRIPT" plan --task-root "$TASK_ROOT"
+python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
+python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
+```
+
+`plan` 的输出会给出唯一 `plan_path`；后两步必须使用该确切文件（不能凭 glob 猜旧计划）。
+
+脚本只使用 Python 3 标准库和一次轻量 `os.scandir()` 清单，计划与结果写入现有
+`TASK_ROOT/_work-record_/recovery/`；对话只汇报计数、动作数和异常摘要。脚本支持的普通命名动作
+不得由 Agent 另写命令替代。它硬性执行以下既有合同规则：从旧电影夹保留中文名，从主视频 stem
+取得英文名、年份和年份后的完整 release 信息；英文标题内部点转空格，目标电影夹为
+`<中文名>.<规范化视频 stem>`，视频扩展名不进入电影夹名。比如
+`魔鬼的陷阱.Dablova past.1962/Dablova past.1962.720p.HDTV.x264-DON.mkv` 必须先得到
+`魔鬼的陷阱.Dablova past.1962.720p.HDTV.x264-DON/`，视频名已合规则则保持不变。
+
+导演夹下的孤立视频仅在视频中文前缀或同 stem NFO 的 title/originaltitle 提供可靠中文名时，才在
+**该导演夹内**创建最终电影夹并连同明确 sidecar 移入；没有可靠中文名绝不猜名或创建英文-only 目录。
+多视频/合集、DVD/BDMV、年份冲突、目标冲突、路径越界、Unicode/大小写歧义和无法提取中文名一律
+输出 `EXCEPTION`，不修改。无 NFO 的普通电影可以通过；脚本不做导演归类、合集拆分、去重或 trash。
+
+`ACTION_REQUIRED` 的脚本 apply 与 verify 均 PASS 后，Agent 才能继续本节后续的导演/合集慢通道；
+`EXCEPTION` 只能按第 6 阶段处理，不能临场猜测。重复运行脚本必须保持幂等并得到
+`NAMING_PASS`，不能把旧空电影夹留在 active tree。
 
 先为每个视频单元计算并写入工作单，再按路径事实判断状态，不把全库先放进 `明确/待查/冲突` 深分流。至少记录：
 
