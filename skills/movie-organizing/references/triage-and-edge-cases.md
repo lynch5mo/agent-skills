@@ -4,14 +4,14 @@
 
 ## Expected 路径与命名快通道
 
-- 每个视频单元先记录 `expected_director_dir`、`expected_movie_dir`、`expected_video_path`、现有 NFO 的 `expected_nfo_path`、字幕的 `expected_subtitle_paths` 和 `source_shape`（`standard`/`orphan`/`dispersed`/`collection`），再分类。
+- 每个视频单元先记录 `source_director_dir`、`expected_director_dir`、`expected_movie_dir`、`expected_video_path`、现有 NFO 的 `expected_nfo_path`、字幕的 `expected_subtitle_paths` 和 `source_shape`（`standard`/`orphan`/`dispersed`/`collection`），再分类。
 - **`NAMING_PASS`**：仅当所有存在的导演夹、电影夹、视频、NFO、字幕实际路径逐字等于对应 expected 路径，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无碰撞；无动作。它只表示命名阶段合格，CORE 前不深查；CORE 通过后仍须参加全量跨目录 DEDUPE 候选扫描。
-- **`ACTION_REQUIRED`**：身份、导演、年份、归属和 sidecar 事实唯一，但需要合同规定的语法规范化，或为 `orphan`、`dispersed`、`collection`、缺标准目录；必须生成完整 bundle，计划内 `mkdir`、改名、拆分和 rehome，不能无动作通过。合集不得整夹 `NAMING_PASS`。
+- **`ACTION_REQUIRED`**：身份、导演、年份、归属和 sidecar 事实唯一，但需要合同规定的语法规范化，或为 `orphan`、`dispersed`、`collection`、缺标准目录；必须生成完整 bundle，计划内 `mkdir`、改名、拆分和 rehome，不能无动作通过。director 下任意有限深度的标准 leaf 统一拍平到 director root，合集不得整夹 `NAMING_PASS`。
 - **`EXCEPTION`**：语义事实、特殊结构、sidecar 配对、Unicode/实体、版本关系或目标碰撞存在不确定性；不得在快通道猜名、覆盖或加后缀。
 
 快通道禁止读 NFO 内容、运行 `ffprobe`/IMDb、计算完整 hash、去重或深度归类；查证只按需用于 EXCEPTION，去重只在 CORE_GATE 后进行（包括此前 `NAMING_PASS` 的 active 电影）。
 
-对 `dispersed`/`collection`，必须逐片闭环身份和导演，复用或计划内创建标准导演夹，建立标准电影夹并将主视频及 sidecar rehome 到 expected 路径；整合集不得原样留在 active tree 后算完成。
+对 `dispersed`/`collection`，必须逐片闭环身份和导演，复用或计划内创建标准导演夹，建立标准电影夹并将主视频及 sidecar rehome 到 expected 路径；任意 wrapper 深度不构成拒绝理由。全部可确定 leaf 移出后，最上层 wrapper 若已证明只剩空目录骨架，则一次性可逆归档到 `_work-record_/flattened-empty/`；未知文件、symlink 或异常单元使相关单元整体 `EXCEPTION`，不得部分拍平。整合集不得原样留在 active tree 后算完成。
 
 ## EXCEPTION 慢通道分流
 

@@ -52,6 +52,367 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
                     return item
         raise AssertionError(f"bundle for {video_stem} not found")
 
+    def _run_cli(self, mode: str, root: Path, plan_path: str, *, dry_run: bool = False):
+        command = [sys.executable, str(SCRIPT_PATH), mode, "--task-root", str(root), "--plan", plan_path]
+        if dry_run:
+            command.append("--dry-run")
+        return subprocess.run(command, check=True, capture_output=True, text=True)
+
+    def _make_nested_standard(self, root: Path, director: str = "导演 Director"):
+        movie_name = "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS"
+        video_name = "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv"
+        movie_dir = root / director / "outer1" / "outer2" / movie_name
+        video = self._make(movie_dir, video_name)
+        subtitle = self._make(movie_dir, video_name.removesuffix(".mkv") + ".chs.srt")
+        return movie_dir, video, subtitle, movie_name, video_name
+
+    def test_v134_normalizes_foreign_director_and_flattens_then_audits_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_director = root / "爱德嘉 莱兹 Edgar Reitz"
+            movie_dir = old_director / "旧外壳" / "影.Original Movie.1949.1080p.BluRay.x264-RLS"
+            video = self._make(movie_dir, "Original Movie.1949.1080p.BluRay.x264-RLS.mkv")
+
+            plan = self._plan(root)
+            self.assertEqual("1.3.4", plan["version"])
+            self.assertEqual(1, len(plan.get("director_actions", [])))
+            director_action = plan["director_actions"][0]
+            self.assertEqual(str(old_director.resolve()), director_action["source"])
+            self.assertEqual(str((root / "爱德嘉·莱兹 Edgar Reitz").resolve()), director_action["target"])
+            bundle = self._find_bundle(plan, video.stem)
+            self.assertEqual("dispersed", bundle["source_shape"])
+            self.assertEqual(
+                str((root / "爱德嘉·莱兹 Edgar Reitz" / bundle["expected_movie_dir"]).resolve()),
+                bundle["expected_movie_dir_path"],
+            )
+
+            plan_path = plan["plan_path"]
+            dry_run = self._run_cli("apply", root, plan_path, dry_run=True)
+            self.assertEqual("PASS", json.loads(dry_run.stdout)["status"])
+            applied = self._run_cli("apply", root, plan_path)
+            self.assertEqual("PASS", json.loads(applied.stdout)["status"])
+            verified = self._run_cli("verify", root, plan_path)
+            self.assertEqual("PASS", json.loads(verified.stdout)["status"])
+
+            final_director = root / "爱德嘉·莱兹 Edgar Reitz"
+            final_movie = final_director / bundle["expected_movie_dir"]
+            self.assertTrue(final_director.is_dir())
+            self.assertTrue((final_movie / video.name).is_file())
+            self.assertFalse(old_director.exists())
+            self.assertFalse(movie_dir.exists())
+            audit = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH.parent / "movie_organizing_audit.py"), "audit", "--task-root", str(root)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            report = json.loads(audit.stdout)
+            self.assertEqual("COMPLETE", report["completion_status"])
+
+    def test_v134_director_middle_dot_rules_preserve_native_and_multi_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fixtures = {
+                "阿布戴·柯西胥 Abdel Kechiche": "Abdel.Movie.2020.1080p.WEB-DL.x264-RLS",
+                "刁亦男 Yi'nan Diao": "Diao.Movie.2020.1080p.WEB-DL.x264-RLS",
+                "奥利弗·纳卡什、艾力克·托莱达诺 Olivier Nakache、Éric Toledano": "Multi.Movie.2020.1080p.WEB-DL.x264-RLS",
+                "张艺谋 Zhang Yimou": "Native.Movie.2020.1080p.WEB-DL.x264-RLS",
+            }
+            for director, stem in fixtures.items():
+                movie = root / director / f"中文片.{stem}"
+                self._make(movie, f"{stem}.mkv")
+
+            plan = self._plan(root)
+            self.assertEqual([], plan.get("director_actions", []))
+            self.assertEqual(
+                {director for director in fixtures},
+                {Path(item["source_director_dir"]).name for item in plan["bundles"]},
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bad = root / "爱德嘉.莱兹 Edgar Reitz"
+            stem = "Original.Movie.1949.1080p.BluRay.x264-RLS"
+            self._make(bad / f"中文片.{stem}", f"{stem}.mkv")
+            plan = self._plan(root)
+            self.assertEqual(1, len(plan["director_actions"]))
+            self.assertEqual("爱德嘉·莱兹 Edgar Reitz", Path(plan["director_actions"][0]["target"]).name)
+
+    def test_v134_director_migration_rejects_ambiguous_boundary_or_foreign_symbols(self):
+        for director in ("爱德嘉 莱兹", "爱德嘉 # 莱兹 Edgar Reitz"):
+            with self.subTest(director=director), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                leaf = root / director / "中文片.Movie.2020.1080p.WEB-DL.x264-RLS"
+                video = self._make(leaf, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+                plan = self._plan(root)
+                bundle = self._find_bundle(plan, video.stem)
+                self.assertEqual("EXCEPTION", bundle["status"])
+                self.assertFalse(bundle["actions"])
+                self.assertEqual([], plan["director_actions"])
+                self.assertTrue(video.exists())
+
+    def test_v134_nested_standard_movie_is_rehomed_to_director_root_with_sidecars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_movie, video, subtitle, movie_name, video_name = self._make_nested_standard(root)
+            plan = self._plan(root)
+            bundle = self._find_bundle(plan, video.stem)
+            self.assertEqual("dispersed", bundle["source_shape"])
+            self.assertEqual(str((root / "导演 Director" / movie_name).resolve()), bundle["expected_movie_dir_path"])
+            self.assertEqual("ACTION_REQUIRED", bundle["status"])
+            result = self._apply(plan, root)
+            self.assertEqual("PASS", result["status"])
+            final_movie = root / "导演 Director" / movie_name
+            self.assertTrue((final_movie / video_name).is_file())
+            self.assertTrue((final_movie / (video.stem + ".chs.srt")).is_file())
+            self.assertFalse(old_movie.exists())
+            self.assertFalse((root / "导演 Director" / "outer1").exists())
+            self.assertTrue((root / "_work-record_" / "flattened-empty").is_dir())
+
+    def test_v134_nested_nonstandard_with_filename_prefix_or_nfo_is_rehomed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            director = root / "导演 Director"
+            prefix_video = self._make(
+                director / "wrapper" / "legacy-prefix",
+                "中文前缀.Prefix Movie.2021.1080p.WEB-DL.x264-RLS.mkv",
+            )
+            nfo_video = self._make(
+                director / "wrapper" / "legacy-nfo",
+                "Nfo.Movie.2022.1080p.WEB-DL.x264-RLS.mkv",
+            )
+            self._make(
+                nfo_video.parent,
+                nfo_video.stem + ".nfo",
+                "<movie><title>NFO 中文片</title></movie>".encode(),
+            )
+            plan = self._plan(root)
+            prefix_bundle = self._find_bundle(plan, prefix_video.stem)
+            nfo_bundle = self._find_bundle(plan, nfo_video.stem)
+            self.assertEqual("dispersed", prefix_bundle["source_shape"])
+            self.assertEqual("dispersed", nfo_bundle["source_shape"])
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            self.assertTrue((director / prefix_bundle["expected_movie_dir"] / "Prefix Movie.2021.1080p.WEB-DL.x264-RLS.mkv").is_file())
+            self.assertTrue((director / nfo_bundle["expected_movie_dir"] / "Nfo Movie.2022.1080p.WEB-DL.x264-RLS.nfo").is_file())
+            self.assertFalse(prefix_video.exists())
+            self.assertFalse(nfo_video.exists())
+
+    def test_v134_nested_ambiguous_units_remain_exception_without_mutation(self):
+        scenarios = ("collision", "multi", "no-chinese")
+        for scenario in scenarios:
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                director = root / "导演 Director"
+                if scenario == "collision":
+                    stem = "Collision.Movie.2020.1080p.WEB-DL.x264-RLS"
+                    source = self._make(director / "wrapper" / "legacy", stem + ".mkv")
+                    (director / ("中文片." + stem)).mkdir(parents=True)
+                elif scenario == "multi":
+                    source = self._make(director / "wrapper" / "legacy", "中文片.Movie.2020.1080p.WEB-DL.x264-A.mkv")
+                    self._make(source.parent, "中文片.Movie.2020.1080p.WEB-DL.x264-B.mkv")
+                else:
+                    source = self._make(director / "wrapper" / "legacy", "NoChinese.Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+
+                plan = self._plan(root)
+                bundle = self._find_bundle(plan, source.stem)
+                self.assertEqual("EXCEPTION", bundle["status"])
+                self.assertFalse(bundle["actions"])
+                self.assertTrue(source.exists())
+                self.assertEqual([], plan.get("director_actions", []))
+
+    def test_v134_shared_wrapper_is_archived_once_after_all_leaf_rehomes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            director = root / "导演 Director"
+            leaves = []
+            for index in (1, 2):
+                movie_name = f"片{index}.Movie {index}.2020.1080p.BluRay.x264-RLS"
+                video_name = f"Movie {index}.2020.1080p.BluRay.x264-RLS.mkv"
+                leaf = director / "shared-wrapper" / f"legacy-{index}" / movie_name
+                leaves.append((leaf, movie_name, video_name))
+                self._make(leaf, video_name)
+
+            plan = self._plan(root)
+            self.assertEqual(1, sum(action.get("action") == "rename_dir" for action in plan["wrapper_actions"]))
+            self.assertEqual(2, len([item for item in plan["bundles"] if item["status"] == "ACTION_REQUIRED"]))
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            self.assertFalse((director / "shared-wrapper").exists())
+            archives = list((root / "_work-record_" / "flattened-empty").iterdir())
+            self.assertEqual(1, len(archives))
+            self.assertTrue((archives[0] / "legacy-1").is_dir())
+            self.assertTrue((archives[0] / "legacy-2").is_dir())
+            for _leaf, movie_name, video_name in leaves:
+                self.assertTrue((director / movie_name / video_name).is_file())
+
+    def test_v134_unknown_wrapper_file_blocks_related_flatten_without_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            director = root / "导演 Director"
+            leaf = director / "wrapper" / "legacy" / "片.Movie.2020.1080p.BluRay.x264-RLS"
+            video = self._make(leaf, "Movie.2020.1080p.BluRay.x264-RLS.mkv")
+            junk = self._make(director / "wrapper", "unknown.txt", b"do not hide")
+
+            plan = self._plan(root)
+            bundle = self._find_bundle(plan, video.stem)
+            self.assertEqual("EXCEPTION", bundle["status"])
+            self.assertIn("unaccounted", bundle["exception"])
+            self.assertFalse(bundle["actions"])
+            self.assertEqual([], plan["wrapper_actions"])
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            self.assertTrue(video.exists())
+            self.assertTrue(junk.exists())
+
+    def _apply_with_wrapper_injection(self, root: Path, movie_dir: Path, kind: str):
+        """Inject an entry immediately after the child movie rename."""
+
+        plan = self._plan(root)
+        wrapper = movie_dir.parents[1]
+        injected = wrapper / ("injected-unknown.txt" if kind == "file" else "injected-link")
+        original_rename = Path.rename
+
+        def rename_with_injection(source, target):
+            result = original_rename(source, target)
+            if Path(source).resolve() == movie_dir.resolve():
+                if kind == "file":
+                    injected.write_bytes(b"arrived after the scan")
+                else:
+                    os.symlink("/outside/task-root", str(injected))
+            return result
+
+        with mock.patch.object(Path, "rename", new=rename_with_injection):
+            result = self._apply(plan, root)
+        return result, plan, wrapper, injected
+
+    def test_v134_wrapper_recheck_rejects_unknown_file_arriving_after_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_director = "爱德嘉 莱兹 Edgar Reitz"
+            movie_dir, _video, _subtitle, _movie_name, _video_name = self._make_nested_standard(root, old_director)
+            result, plan, wrapper, injected = self._apply_with_wrapper_injection(root, movie_dir, "file")
+
+            self.assertEqual("FAIL", result["status"])
+            self.assertIn("wrapper", result["error_summary"].lower())
+            self.assertTrue(wrapper.is_dir())
+            self.assertTrue(injected.is_file())
+            archive_target = next(
+                action["target"] for action in plan["wrapper_actions"] if action["action"] == "rename_dir"
+            )
+            self.assertFalse(Path(archive_target).exists())
+            self.assertTrue((root / old_director).is_dir())
+            self.assertFalse((root / "爱德嘉·莱兹 Edgar Reitz").exists())
+            self.assertTrue(plan["director_actions"])
+
+    def test_v134_wrapper_recheck_rejects_symlink_arriving_after_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_director = "爱德嘉 莱兹 Edgar Reitz"
+            movie_dir, _video, _subtitle, _movie_name, _video_name = self._make_nested_standard(root, old_director)
+            result, plan, wrapper, injected = self._apply_with_wrapper_injection(root, movie_dir, "symlink")
+
+            self.assertEqual("FAIL", result["status"])
+            self.assertIn("wrapper", result["error_summary"].lower())
+            self.assertTrue(wrapper.is_dir())
+            self.assertTrue(os.path.lexists(injected))
+            self.assertTrue(injected.is_symlink())
+            self.assertTrue((root / old_director).is_dir())
+            self.assertFalse((root / "爱德嘉·莱兹 Edgar Reitz").exists())
+            self.assertTrue(plan["director_actions"])
+
+    def test_v134_apply_rejects_symlink_source_or_target_before_mutation(self):
+        for kind in ("source", "target"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+                root = Path(tmp)
+                movie_dir = root / "导演 Director" / "标准片.Standard Movie.2020"
+                video = self._make(movie_dir, "Standard.Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+                plan = self._plan(root)
+                bundle = self._find_bundle(plan, video.stem)
+                action = next(item for item in bundle["actions"] if item["action"] == "move_file")
+                external = Path(outside_tmp) / f"movie-organizing-{kind}-outside"
+                external.write_bytes(b"outside")
+                link = Path(action["source"] if kind == "source" else action["target"])
+                link.unlink(missing_ok=True)
+                os.symlink(str(external), str(link))
+
+                result = self._apply(plan, root)
+
+                self.assertEqual("FAIL", result["status"])
+                self.assertEqual(0, result["executed_actions"])
+                self.assertIn("symlink", result["error_summary"].lower())
+                self.assertTrue(link.is_symlink())
+                external.unlink()
+
+    def test_v134_direct_orphan_wrapper_is_archived_but_standard_movie_dir_is_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            director = root / "导演 Director"
+            orphan_wrapper = director / "orphan-wrapper"
+            orphan_video = self._make(orphan_wrapper, "孤儿片.Orphan Movie.2021.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            orphan_bundle = self._find_bundle(plan, orphan_video.stem)
+            self.assertEqual("orphan", orphan_bundle["source_shape"])
+            self.assertTrue(any(action["action"] == "rename_dir" for action in plan["wrapper_actions"]))
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            self.assertFalse(orphan_wrapper.exists())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            movie_dir = root / "导演 Director" / "标准片.Standard Movie.2020"
+            video = self._make(movie_dir, "Standard Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            self.assertEqual([], plan["wrapper_actions"])
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            self.assertFalse(movie_dir.exists())
+
+    def test_v134_two_nested_leaves_share_one_final_director_rename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_director = root / "爱德嘉 莱兹 Edgar Reitz"
+            leaves = (
+                old_director / "outer-a" / "影一.Movie One.1949.1080p.BluRay.x264-RLS",
+                old_director / "outer-b" / "影二.Movie Two.1950.1080p.BluRay.x264-RLS",
+            )
+            for leaf in leaves:
+                self._make(leaf, leaf.name.split(".", 1)[1] + ".mkv")
+            plan = self._plan(root)
+
+            self.assertEqual(1, len(plan["director_actions"]))
+            self.assertEqual(2, sum(action["action"] == "rename_dir" for action in plan["wrapper_actions"]))
+            self.assertEqual("PASS", self._apply(plan, root)["status"])
+            final_director = root / "爱德嘉·莱兹 Edgar Reitz"
+            self.assertTrue(final_director.is_dir())
+            self.assertFalse(old_director.exists())
+            self.assertEqual(2, len(list(final_director.iterdir())))
+
+    def test_v134_bracket_dir_uses_unicode_latin_boundary_without_contaminating_chinese_title(self):
+        for english_title in ("Élan", "Ångström"):
+            with self.subTest(english_title=english_title), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                movie_dir = root / f"中文电影 {english_title} (2020)"
+                video = self._make(movie_dir, f"{english_title}.2020.1080p.WEB-DL.x264-RLS.mkv")
+
+                plan = self._plan(root)
+                bundle = self._find_bundle(plan, video.stem)
+
+                self.assertEqual("ACTION_REQUIRED", bundle["status"])
+                self.assertEqual(
+                    f"中文电影.{english_title}.2020.1080p.WEB-DL.x264-RLS",
+                    bundle["expected_movie_dir"],
+                )
+                self.assertNotIn("中文电影 É", bundle["expected_movie_dir"])
+
+    def test_v134_bracket_dir_with_cyrillic_title_stays_exception(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            movie_dir = root / "导演 Director" / "中文电影 Фильм (2020)"
+            video = self._make(movie_dir, "Film.2020.1080p.WEB-DL.x264-RLS.mkv")
+
+            plan = self._plan(root)
+            bundle = self._find_bundle(plan, video.stem)
+
+            self.assertEqual("EXCEPTION", bundle["status"])
+            self.assertFalse(bundle["actions"])
+            self.assertTrue(video.exists())
+
     def test_apply_result_write_failure_is_nonzero_and_preserves_executed_actions(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

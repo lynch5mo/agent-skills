@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.3"
-EXPECTED_NAMING_CONTRACT_SHA256 = "639eece9c338efedabcb4a2c0b951cf00f202f95e1890776e35dd31a53c3d6c0"
+VERSION = "1.3.4"
+EXPECTED_NAMING_CONTRACT_SHA256 = "c4a50e6cf92c230da3ad5e19092d80167b5379b6fd34eb919f8db7a6cf5c3a12"
 
 VIDEO_EXTENSIONS = {
     ".avi",
@@ -49,6 +49,12 @@ def _canonical(path: str | Path) -> Path:
     """Return a canonical path without requiring it to exist."""
 
     return Path(os.path.realpath(os.fspath(path)))
+
+
+def _lexical(path: str | Path) -> Path:
+    """Normalize ``..`` without resolving symlinks."""
+
+    return Path(os.path.abspath(os.fspath(path)))
 
 
 def _inside(root: str | Path, path: str | Path, *, allow_root: bool = True) -> bool:
@@ -90,11 +96,76 @@ def _clean_cn(text: str) -> str:
     return text.strip().strip(" .-_\t\r\n")
 
 
+def _is_latin_letter(char: str) -> bool:
+    name = unicodedata.name(char, "")
+    return "LATIN" in name or (char.isascii() and char.isalpha())
+
+
+def _director_parts(name: str) -> Optional[Tuple[str, str]]:
+    """Split a director directory at an unambiguous Latin-name boundary."""
+
+    stripped = name.strip()
+    boundary = next((index for index, char in enumerate(stripped) if _is_latin_letter(char)), -1)
+    if boundary <= 0:
+        return None
+    chinese_part = stripped[:boundary].strip().rstrip(".").strip()
+    english_part = stripped[boundary:].strip()
+    if not chinese_part or not english_part or not _is_cjk(chinese_part):
+        return None
+    if _is_cjk(english_part) or not any(_is_latin_letter(char) for char in english_part):
+        return None
+    # Only the documented separator characters are accepted in the Chinese
+    # segment.  A stray symbol would make automatic identity inference unsafe.
+    allowed = set(" ·、.")
+    if any(not (_is_cjk(char) or char in allowed) for char in chinese_part):
+        return None
+    pieces = [piece for piece in re.split(r"[ .·、]+", chinese_part) if piece]
+    if any(not _is_cjk(piece) for piece in pieces):
+        return None
+    if any(char in chinese_part for char in " .·、") and len(pieces) < 2:
+        # A single contiguous native Chinese name is valid; separators without
+        # at least two CJK fragments are ambiguous and stay EXCEPTION.
+        return None
+    return chinese_part, english_part
+
+
+def _normalize_director_chinese_part(value: str) -> str:
+    """Normalize foreign-name separators without changing native names."""
+
+    normalized_parts: List[str] = []
+    for part in value.split("、"):
+        part = part.strip()
+        if not part:
+            continue
+        # A Chinese segment that is already contiguous is a native Chinese
+        # name; retain it.  Spaces or ASCII dots between two or more CJK
+        # fragments indicate a v1.3.3 transliteration migration and become
+        # the contract's middle dot.
+        if re.search(r"[ .]", part):
+            part = re.sub(r"[ .]+", "·", part)
+            part = re.sub(r"·+", "·", part).strip("·")
+        normalized_parts.append(part)
+    return "、".join(normalized_parts)
+
+
+def _normalize_director_name(name: str) -> Optional[str]:
+    """Return the deterministic contract form, or ``None`` when ambiguous."""
+
+    parts = _director_parts(name)
+    if parts is None:
+        # Legacy non-Chinese director anchors remain untouched here; the audit
+        # still reports them as non-conforming when they contain active media.
+        return name.strip() if not _is_cjk(name) else None
+    chinese_part, english_part = parts
+    chinese_part = _normalize_director_chinese_part(chinese_part)
+    return f"{chinese_part} {english_part}"
+
+
 def _name_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
-def _conflicting_name(parent: Path, name: str) -> Optional[str]:
+def _conflicting_name(parent: Path, name: str, *, ignore: Optional[Path] = None) -> Optional[str]:
     """Find a sibling with the same case/Unicode-normalized name."""
 
     wanted = _name_key(name)
@@ -105,6 +176,8 @@ def _conflicting_name(parent: Path, name: str) -> Optional[str]:
     with entries as iterator:
         for entry in iterator:
             if entry.name == name:
+                continue
+            if ignore is not None and _canonical(entry.path) == _canonical(ignore):
                 continue
             if _name_key(entry.name) == wanted:
                 return entry.name
@@ -156,16 +229,31 @@ def _parse_video_stem(stem: str) -> Optional[Dict[str, str]]:
     }
 
 
+def _is_allowed_chinese_title_char(char: str) -> bool:
+    """Return whether a legacy Chinese title character is contract-safe."""
+
+    if _is_cjk(char) or char in {" ", "\u3000", "·"}:
+        return True
+    codepoint = ord(char)
+    # CJK punctuation and the full-width punctuation block are valid title
+    # glyphs, while ASCII/Latin/Cyrillic letters remain deliberately excluded.
+    return 0x3000 <= codepoint <= 0x303F or 0xFF01 <= codepoint <= 0xFF65
+
+
 def _extract_cn_before_english(text: str) -> str:
     """Extract a Chinese title before an English/ASCII title."""
 
-    match = re.search(r"[A-Za-z]", text)
-    if match:
-        candidate = text[: match.start()]
+    boundary = next((index for index, char in enumerate(text) if _is_latin_letter(char)), -1)
+    if boundary >= 0:
+        candidate = text[:boundary]
     else:
         candidate = text
     candidate = _clean_cn(candidate)
-    return candidate if _is_cjk(candidate) else ""
+    if not _is_cjk(candidate):
+        return ""
+    if any(not _is_allowed_chinese_title_char(char) for char in candidate):
+        return ""
+    return candidate
 
 
 def _parse_movie_dir(name: str) -> Optional[Tuple[str, str]]:
@@ -325,13 +413,18 @@ def _empty_bundle(
     source_shape: str,
     reason: str,
     *,
+    source_director_dir: Optional[Path] = None,
+    expected_director_dir: Optional[Path] = None,
     expected_movie_dir: str = "",
     expected_movie_dir_path: str = "",
     expected_video_target: str = "",
 ) -> Dict[str, object]:
+    source_director = source_director_dir or parent.parent
+    expected_director = expected_director_dir or source_director
     return {
         "source_movie_dir": str(parent),
-        "expected_director_dir": str(parent.parent),
+        "source_director_dir": str(source_director),
+        "expected_director_dir": str(expected_director),
         "status": "EXCEPTION",
         "source_shape": source_shape,
         "expected_movie_dir": expected_movie_dir or parent.name,
@@ -361,7 +454,34 @@ def _build_bundle(parent: Path, videos: Sequence[Path], task_root: Path) -> Dict
 
     dir_info = _parse_movie_dir(parent.name)
     is_standard = dir_info is not None
-    source_shape = "standard" if is_standard else "orphan"
+    relative_parts = parent.relative_to(task_root).parts if _inside(task_root, parent) else ()
+    if not relative_parts:
+        return _empty_bundle(parent, video, "orphan", "scope: root-level orphan has no director folder")
+
+    legacy_root_movie = len(relative_parts) == 1 and is_standard
+    if legacy_root_movie:
+        source_director = task_root
+        expected_director = task_root
+    else:
+        source_director = task_root / relative_parts[0]
+        normalized_director = _normalize_director_name(source_director.name)
+        if normalized_director is None:
+            source_shape = "dispersed" if len(relative_parts) > 1 else "orphan"
+            return _empty_bundle(
+                parent,
+                video,
+                source_shape,
+                "director name has no unambiguous Chinese/Latin boundary or valid separators",
+                source_director_dir=source_director,
+                expected_director_dir=source_director,
+            )
+        expected_director = task_root / normalized_director
+
+    # A direct movie child of the director anchor is already in the standard
+    # shape.  Only one or more wrapper levels below that child are dispersed
+    # and therefore need a rehome to the director root.
+    nested = not legacy_root_movie and len(relative_parts) > 2
+    source_shape = "standard" if is_standard and not nested else ("dispersed" if nested else "orphan")
     dir_year = dir_info[1] if dir_info else ""
     cn_from_dir = dir_info[0] if dir_info else ""
     cn_from_video = parsed["chinese_prefix"]
@@ -377,238 +497,151 @@ def _build_bundle(parent: Path, videos: Sequence[Path], task_root: Path) -> Dict
                 video,
                 "collection",
                 "special/container subdirectory present; keep DVD/BDMV/collection for Agent",
+                source_director_dir=source_director,
+                expected_director_dir=expected_director,
             )
         if dir_year != parsed["year"]:
-            return _empty_bundle(parent, video, source_shape, "year mismatch between directory and video")
+            return _empty_bundle(
+                parent, video, source_shape, "year mismatch between directory and video",
+                source_director_dir=source_director, expected_director_dir=expected_director,
+            )
         if cn_from_video and cn_from_video != cn_from_dir:
-            return _empty_bundle(parent, video, source_shape, "conflicting Chinese title sources")
+            return _empty_bundle(
+                parent, video, source_shape, "conflicting Chinese title sources",
+                source_director_dir=source_director, expected_director_dir=expected_director,
+            )
         chinese_title = cn_from_dir
-        location = parent.parent
     else:
-        # An orphan means a direct video in a director folder. Root-level and
-        # nested container videos are deliberately not guessed into a folder.
-        relative_parts = parent.relative_to(task_root).parts if _inside(task_root, parent) else ()
-        if parent == task_root:
-            return _empty_bundle(parent, video, "orphan", "scope: root-level orphan has no director folder")
-        if len(relative_parts) != 1:
-            return _empty_bundle(parent, video, "collection", "scope: nested video is not a direct director orphan")
         if cn_from_video and cn_from_nfo and cn_from_video != cn_from_nfo:
-            return _empty_bundle(parent, video, "orphan", "conflicting Chinese title sources")
+            return _empty_bundle(
+                parent, video, source_shape, "conflicting Chinese title sources",
+                source_director_dir=source_director, expected_director_dir=expected_director,
+            )
         chinese_title = cn_from_video or cn_from_nfo
         if not chinese_title:
-            return _empty_bundle(parent, video, "orphan", "no reliable Chinese title source for orphan")
-        location = parent
+            return _empty_bundle(
+                parent, video, source_shape, "no reliable Chinese title source for orphan",
+                source_director_dir=source_director, expected_director_dir=expected_director,
+            )
 
     normalized_stem = parsed["normalized_stem"]
     expected_video_name = f"{normalized_stem}{video.suffix}"
     expected_dir_name = f"{chinese_title}.{normalized_stem}"
     source_dir = parent
-    target_dir = location / expected_dir_name
+    staging_dir = source_director / expected_dir_name
+    target_dir = expected_director / expected_dir_name
     expected_video_target = target_dir / expected_video_name
 
+    def empty(reason: str) -> Dict[str, object]:
+        return _empty_bundle(
+            parent,
+            video,
+            source_shape,
+            reason,
+            source_director_dir=source_director,
+            expected_director_dir=expected_director,
+            expected_movie_dir=expected_dir_name,
+            expected_movie_dir_path=str(target_dir),
+            expected_video_target=str(expected_video_target),
+        )
+
     if not _inside(task_root, target_dir, allow_root=False):
-        return _empty_bundle(
-            parent,
-            video,
-            source_shape,
-            "scope: expected target is outside TASK_ROOT",
-            expected_movie_dir=expected_dir_name,
-            expected_movie_dir_path=str(target_dir),
-            expected_video_target=str(expected_video_target),
-        )
-    if target_dir != source_dir and target_dir.exists():
-        return _empty_bundle(
-            parent,
-            video,
-            source_shape,
-            f"target exists: {target_dir}",
-            expected_movie_dir=expected_dir_name,
-            expected_movie_dir_path=str(target_dir),
-            expected_video_target=str(expected_video_target),
-        )
-    if target_dir != source_dir:
-        sibling_collision = _conflicting_name(target_dir.parent, target_dir.name)
+        return empty("scope: expected target is outside TASK_ROOT")
+    if staging_dir != source_dir and staging_dir.exists():
+        return empty(f"target exists: {staging_dir}")
+    if target_dir != source_dir and target_dir.exists() and target_dir != staging_dir:
+        return empty(f"target exists: {target_dir}")
+    if staging_dir != source_dir:
+        sibling_collision = _conflicting_name(staging_dir.parent, staging_dir.name)
         if sibling_collision:
-            return _empty_bundle(
-                parent,
-                video,
-                source_shape,
-                f"Unicode/case collision with target directory: {sibling_collision}",
-                expected_movie_dir=expected_dir_name,
-                expected_movie_dir_path=str(target_dir),
-                expected_video_target=str(expected_video_target),
-            )
+            return empty(f"Unicode/case collision with target directory: {sibling_collision}")
 
     child_collision = _conflicting_name(source_dir, expected_video_name)
     if child_collision:
-        return _empty_bundle(
-            parent,
-            video,
-            source_shape,
-            f"Unicode/case collision with target video: {child_collision}",
-            expected_movie_dir=expected_dir_name,
-            expected_movie_dir_path=str(target_dir),
-            expected_video_target=str(expected_video_target),
-        )
+        return empty(f"Unicode/case collision with target video: {child_collision}")
 
     sidecars = _collect_sidecars(parent, video, video.stem, normalized_stem, target_dir)
     invalid_sidecar = next(
-        (
-            item
-            for item in sidecars
-            if item["kind"] in {"subtitle_invalid", "sidecar_unrelated"}
-        ),
-        None,
+        (item for item in sidecars if item["kind"] in {"subtitle_invalid", "sidecar_unrelated"}), None
     )
     if invalid_sidecar:
-        reason = (
-            "subtitle language marker is ambiguous"
-            if invalid_sidecar["kind"] == "subtitle_invalid"
-            else "unrelated NFO/subtitle sidecar is not attributable"
-        )
-        return _empty_bundle(
-            parent,
-            video,
-            source_shape,
-            f"{reason}: {invalid_sidecar['source']}",
-            expected_movie_dir=expected_dir_name,
-            expected_movie_dir_path=str(target_dir),
-            expected_video_target=str(expected_video_target),
-        )
+        reason = "subtitle language marker is ambiguous" if invalid_sidecar["kind"] == "subtitle_invalid" else "unrelated NFO/subtitle sidecar is not attributable"
+        return empty(f"{reason}: {invalid_sidecar['source']}")
     seen_sidecar_targets: set[str] = set()
     for sidecar in sidecars:
         target = _canonical(sidecar["target"])
         source = _canonical(sidecar["source"])
         target_key = _name_key(Path(sidecar["target"]).name)
         if target_key in seen_sidecar_targets:
-            return _empty_bundle(
-                parent,
-                video,
-                source_shape,
-                f"ambiguous sidecar target: {sidecar['target']}",
-                expected_movie_dir=expected_dir_name,
-                expected_movie_dir_path=str(target_dir),
-                expected_video_target=str(expected_video_target),
-            )
+            return empty(f"ambiguous sidecar target: {sidecar['target']}")
         seen_sidecar_targets.add(target_key)
         if target.exists() and target != source:
-            return _empty_bundle(
-                parent,
-                video,
-                source_shape,
-                f"target sidecar exists: {target}",
-                expected_movie_dir=expected_dir_name,
-                expected_movie_dir_path=str(target_dir),
-                expected_video_target=str(expected_video_target),
-            )
-        sibling_collision = _conflicting_name(
-            source_dir if is_standard else target_dir,
-            Path(sidecar["target"]).name,
-        )
+            return empty(f"target sidecar exists: {target}")
+        sibling_collision = _conflicting_name(source_dir if is_standard else staging_dir, Path(sidecar["target"]).name)
         if sibling_collision:
-            return _empty_bundle(
-                parent,
-                video,
-                source_shape,
-                f"Unicode/case collision with target sidecar: {sibling_collision}",
-                expected_movie_dir=expected_dir_name,
-                expected_movie_dir_path=str(target_dir),
-                expected_video_target=str(expected_video_target),
-            )
+            return empty(f"Unicode/case collision with target sidecar: {sibling_collision}")
 
     actions: List[Dict[str, object]] = []
     action_number = 1
     if is_standard:
-        # Rename children first, then rename the enclosing movie folder. This
-        # avoids an empty legacy directory and keeps each bundle reversible.
         child_video_target = source_dir / expected_video_name
         if _canonical(video) != _canonical(child_video_target):
-            actions.append(
-                _action(
-                    f"a{action_number}",
-                    "move_file",
-                    source=video,
-                    target=child_video_target,
-                    evidence="video stem normalized from filename",
-                    rollback="rename target back to source",
-                    preconditions=["source exists", "target absent", "both paths under TASK_ROOT"],
-                    postconditions=["source absent", "target exists"],
-                )
-            )
+            actions.append(_action(
+                f"a{action_number}", "move_file", source=video, target=child_video_target,
+                evidence="video stem normalized from filename", rollback="rename target back to source",
+                preconditions=["source exists", "target absent", "both paths under TASK_ROOT"],
+                postconditions=["source absent", "target exists"],
+            ))
             action_number += 1
         for sidecar in sidecars:
             source = Path(sidecar["source"])
             target = source_dir / Path(sidecar["target"]).name
             if _canonical(source) == _canonical(target):
                 continue
-            actions.append(
-                _action(
-                    f"a{action_number}",
-                    "move_file",
-                    source=source,
-                    target=target,
-                    evidence=f"{sidecar['kind']} follows normalized video basename",
-                    rollback="rename target back to source",
-                    preconditions=["source exists", "target absent", "bundle member is same-stem sidecar"],
-                    postconditions=["source absent", "target exists"],
-                )
-            )
+            actions.append(_action(
+                f"a{action_number}", "move_file", source=source, target=target,
+                evidence=f"{sidecar['kind']} follows normalized video basename", rollback="rename target back to source",
+                preconditions=["source exists", "target absent", "bundle member is same-stem sidecar"],
+                postconditions=["source absent", "target exists"],
+            ))
             action_number += 1
-        if _canonical(target_dir) != _canonical(source_dir):
-            actions.append(
-                _action(
-                    f"a{action_number}",
-                    "rename_dir",
-                    source=source_dir,
-                    target=target_dir,
-                    evidence="legacy/incomplete movie folder normalized from CN title + video stem",
-                    rollback="rename target directory back to source directory",
-                    preconditions=["source directory exists", "target directory absent", "target is sibling under TASK_ROOT"],
-                    postconditions=["source directory absent", "target directory exists"],
-                )
-            )
+        if _canonical(staging_dir) != _canonical(source_dir):
+            actions.append(_action(
+                f"a{action_number}", "rename_dir", source=source_dir, target=staging_dir,
+                evidence="legacy/incomplete movie folder normalized and rehomed to director anchor",
+                rollback="rename target directory back to source directory",
+                preconditions=["source directory exists", "target directory absent", "target is under source director anchor"],
+                postconditions=["source directory absent", "target directory exists"],
+            ))
     else:
-        # Orphans are placed directly under their existing director folder;
-        # never create an English-only or out-of-scope temporary folder.
-        actions.append(
-            _action(
-                f"a{action_number}",
-                "mkdir",
-                source=None,
-                target=target_dir,
-                evidence="reliable CN source from filename prefix or same-stem NFO",
-                rollback="leave empty directory for manual reversible handling",
-                preconditions=["target absent", "parent director folder exists", "target under TASK_ROOT"],
-                postconditions=["target directory exists"],
-            )
-        )
+        actions.append(_action(
+            f"a{action_number}", "mkdir", source=None, target=staging_dir,
+            evidence="reliable CN source from filename prefix or same-stem NFO",
+            rollback="leave empty directory for manual reversible handling",
+            preconditions=["target absent", "parent director folder exists", "target under TASK_ROOT"],
+            postconditions=["target directory exists"],
+        ))
         action_number += 1
-        bundle_moves = [(video, expected_video_target, "video")]
-        bundle_moves.extend((Path(item["source"]), Path(item["target"]), item["kind"]) for item in sidecars)
+        bundle_moves = [(video, staging_dir / expected_video_name, "video")]
+        bundle_moves.extend((Path(item["source"]), staging_dir / Path(item["target"]).name, item["kind"]) for item in sidecars)
         for source, target, kind in bundle_moves:
-            actions.append(
-                _action(
-                    f"a{action_number}",
-                    "move_file",
-                    source=source,
-                    target=Path(target),
-                    evidence=f"{kind} moved as one movie bundle",
-                    rollback="rename target back to source",
-                    preconditions=["source exists", "target absent", "source and target under TASK_ROOT"],
-                    postconditions=["source absent", "target exists"],
-                )
-            )
+            actions.append(_action(
+                f"a{action_number}", "move_file", source=source, target=Path(target),
+                evidence=f"{kind} moved as one movie bundle", rollback="rename target back to source",
+                preconditions=["source exists", "target absent", "source and target under TASK_ROOT"],
+                postconditions=["source absent", "target exists"],
+            ))
             action_number += 1
 
     source_nfo_paths = [item["source"] for item in sidecars if item["kind"] == "nfo"]
     source_subtitle_paths = [item["source"] for item in sidecars if item["kind"] == "subtitle"]
     expected_nfo_targets = [item["target"] for item in sidecars if item["kind"] == "nfo"]
     expected_subtitle_targets = [item["target"] for item in sidecars if item["kind"] == "subtitle"]
-
     status = "NAMING_PASS" if not actions else "ACTION_REQUIRED"
     return {
         "source_movie_dir": str(parent),
-        "expected_director_dir": str(location),
+        "source_director_dir": str(source_director),
+        "expected_director_dir": str(expected_director),
         "status": status,
         "source_shape": source_shape,
         "expected_movie_dir": expected_dir_name,
@@ -659,8 +692,19 @@ def _contract_hash() -> str:
         return ""
 
 
-def _plan_signature(bundles: Iterable[Dict[str, object]]) -> str:
-    payload = json.dumps(list(bundles), ensure_ascii=False, sort_keys=True).encode("utf-8")
+def _plan_signature(
+    bundles: Iterable[Dict[str, object]],
+    wrapper_actions: Optional[Iterable[Dict[str, object]]] = None,
+    director_actions: Optional[Iterable[Dict[str, object]]] = None,
+) -> str:
+    payload_object: object = list(bundles)
+    if wrapper_actions is not None or director_actions is not None:
+        payload_object = {
+            "bundles": list(payload_object),
+            "wrapper_actions": list(wrapper_actions or []),
+            "director_actions": list(director_actions or []),
+        }
+    payload = json.dumps(payload_object, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -673,6 +717,230 @@ def _mark_exception(bundle: Dict[str, object], reason: str) -> None:
 def _destination_key(path: str | Path) -> Tuple[str, str]:
     destination = _canonical(path)
     return str(_canonical(destination.parent)), _name_key(destination.name)
+
+
+def _bundle_wrapper(bundle: Dict[str, object], root: Path) -> Optional[Path]:
+    """Return the topmost wrapper below a director anchor, if any."""
+
+    source_value = bundle.get("source_movie_dir")
+    director_value = bundle.get("source_director_dir")
+    if not source_value or not director_value:
+        return None
+    source = _canonical(str(source_value))
+    director = _canonical(str(director_value))
+    if (
+        director == _canonical(root)
+        or not _inside(root, director, allow_root=False)
+        or not _inside(root, source, allow_root=False)
+    ):
+        return None
+    try:
+        relative = source.relative_to(director).parts
+    except ValueError:
+        return None
+    if not relative:
+        return None
+    if len(relative) == 1:
+        # A direct standard movie directory is itself the movie unit, not a
+        # wrapper.  A non-standard/orphan directory containing a loose video
+        # is a real wrapper and may be archived once its contents move out.
+        if bundle.get("source_shape") in {"orphan", "dispersed"} and _parse_movie_dir(source.name) is None:
+            return source
+        return None
+    return director / relative[0]
+
+
+def _archive_wrapper_target(root: Path, wrapper: Path) -> Path:
+    stable_key = hashlib.sha256(str(_canonical(wrapper)).encode("utf-8")).hexdigest()[:12]
+    return root / WORK_RECORD_DIR / "flattened-empty" / f"{stable_key}-{wrapper.name}"
+
+
+def _wrapper_files_are_accounted(
+    wrapper: Path, bundles: Sequence[Dict[str, object]]
+) -> Tuple[bool, str]:
+    """Prove a wrapper will contain only empty directories after child moves."""
+
+    known_files = set()
+    for bundle in bundles:
+        for key in ("expected_video_source", "source_nfo_paths", "source_subtitle_paths"):
+            value = bundle.get(key)
+            values = value if isinstance(value, list) else [value]
+            for path_value in values:
+                if path_value:
+                    known_files.add(_canonical(str(path_value)))
+    stack = [wrapper]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError as error:
+            return False, f"wrapper scan failed: {error}"
+        for entry in entries:
+            item = Path(entry.path)
+            if entry.is_symlink():
+                return False, f"wrapper contains symlink: {item}"
+            if entry.is_dir(follow_symlinks=False):
+                stack.append(item)
+                continue
+            if entry.is_file(follow_symlinks=False):
+                if _canonical(item) not in known_files:
+                    return False, f"wrapper contains unaccounted file: {item}"
+                continue
+            return False, f"wrapper contains unsupported entry: {item}"
+    return True, ""
+
+
+def _wrapper_is_empty_skeleton(wrapper: Path) -> Tuple[bool, str]:
+    """Recheck a wrapper immediately before archive; never follow links."""
+
+    wrapper = _lexical(wrapper)
+    try:
+        mode = os.lstat(wrapper).st_mode
+    except OSError as error:
+        return False, f"wrapper cannot be inspected immediately before archive: {error}"
+    if not stat.S_ISDIR(mode):
+        return False, f"wrapper is not a real directory immediately before archive: {wrapper}"
+
+    stack = [wrapper]
+    while stack:
+        current = stack.pop()
+        try:
+            entries = list(os.scandir(current))
+        except OSError as error:
+            return False, f"wrapper cannot be rescanned immediately before archive: {error}"
+        for entry in entries:
+            item = _lexical(entry.path)
+            try:
+                item_mode = os.lstat(item).st_mode
+            except OSError as error:
+                return False, f"wrapper entry cannot be inspected immediately before archive: {error}"
+            if stat.S_ISLNK(item_mode):
+                return False, f"wrapper changed after bundle actions; symlink found: {item}"
+            if stat.S_ISDIR(item_mode):
+                stack.append(item)
+                continue
+            return False, f"wrapper changed after bundle actions; non-directory entry found: {item}"
+    return True, ""
+
+
+def _mark_director_target_collisions(root: Path, bundles: Sequence[Dict[str, object]]) -> None:
+    """Mark every unit of a director whose normalized target is occupied."""
+
+    groups: Dict[Path, List[Dict[str, object]]] = {}
+    for bundle in bundles:
+        source_value = bundle.get("source_director_dir")
+        if source_value:
+            groups.setdefault(_canonical(str(source_value)), []).append(bundle)
+    target_owners: Dict[Tuple[str, str], Path] = {}
+    for source, group in groups.items():
+        expected_value = group[0].get("expected_director_dir")
+        if not expected_value:
+            continue
+        expected = _canonical(str(expected_value))
+        if source == expected:
+            continue
+        target_key = _destination_key(expected)
+        owner = target_owners.get(target_key)
+        if owner is not None and owner != source:
+            for item in groups[owner] + group:
+                _mark_exception(item, f"multiple source directors normalize to target: {expected}")
+            continue
+        target_owners[target_key] = source
+        if expected.exists() or _conflicting_name(expected.parent, expected.name, ignore=source):
+            for item in group:
+                _mark_exception(item, f"target director exists or collides: {expected}")
+
+
+def _plan_wrapper_actions(root: Path, bundles: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+    groups: Dict[Path, List[Dict[str, object]]] = {}
+    for bundle in bundles:
+        wrapper = _bundle_wrapper(bundle, root)
+        if wrapper is not None:
+            groups.setdefault(_canonical(wrapper), []).append(bundle)
+    safe: List[Tuple[Path, List[Dict[str, object]]]] = []
+    for wrapper, group in sorted(groups.items(), key=lambda item: str(item[0])):
+        if any(item.get("status") == "EXCEPTION" for item in group):
+            for item in group:
+                _mark_exception(item, "wrapper contains an unresolved movie unit; flatten is all-or-nothing")
+            continue
+        accounted, reason = _wrapper_files_are_accounted(wrapper, group)
+        if not accounted:
+            for item in group:
+                _mark_exception(item, reason)
+            continue
+        target = _archive_wrapper_target(root, wrapper)
+        if target.exists() or _conflicting_name(target.parent, target.name):
+            for item in group:
+                _mark_exception(item, f"flattened-empty archive target collision: {target}")
+            continue
+        safe.append((wrapper, group))
+    if not safe:
+        return []
+    archive_parent = root / WORK_RECORD_DIR / "flattened-empty"
+    if os.path.lexists(archive_parent):
+        if archive_parent.is_symlink() or not archive_parent.is_dir() or not _inside(root, archive_parent, allow_root=False):
+            for _wrapper, group in safe:
+                for item in group:
+                    _mark_exception(item, f"flattened-empty archive parent is not a real in-root directory: {archive_parent}")
+            return []
+        actions: List[Dict[str, object]] = []
+    else:
+        actions = [_action(
+            "wrapper-mkdir",
+            "mkdir",
+            source=None,
+            target=archive_parent,
+            evidence="create reversible archive for proven empty wrapper skeletons",
+            rollback="move archive directory back under TASK_ROOT/_work-record_",
+            preconditions=["target absent", "_work-record_ is an in-root directory"],
+            postconditions=["target directory exists"],
+        )]
+    for wrapper, _group in safe:
+        target = _archive_wrapper_target(root, wrapper)
+        key = hashlib.sha256(str(wrapper).encode("utf-8")).hexdigest()[:12]
+        actions.append(_action(
+            f"wrapper-archive-{key}",
+            "rename_dir",
+            source=wrapper,
+            target=target,
+            evidence="all child movie bundles rehomed; wrapper proven empty directory skeleton",
+            rollback="rename flattened-empty archive back to original wrapper path",
+            preconditions=["all child movie actions succeeded", "source has no files or symlinks", "target absent"],
+            postconditions=["source wrapper absent", "archive skeleton exists under _work-record_"],
+        ))
+    return actions
+
+
+def _plan_director_actions(root: Path, bundles: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+    groups: Dict[Path, List[Dict[str, object]]] = {}
+    for bundle in bundles:
+        source_value = bundle.get("source_director_dir")
+        if source_value:
+            groups.setdefault(_canonical(str(source_value)), []).append(bundle)
+    actions: List[Dict[str, object]] = []
+    for source, group in sorted(groups.items(), key=lambda item: str(item[0])):
+        expected_value = group[0].get("expected_director_dir")
+        if not expected_value:
+            continue
+        expected = _canonical(str(expected_value))
+        if source == expected or any(item.get("status") == "EXCEPTION" for item in group):
+            continue
+        if not source.is_dir() or expected.exists() or _conflicting_name(expected.parent, expected.name, ignore=source):
+            for item in group:
+                _mark_exception(item, f"director rename blocked by target collision or missing source: {expected}")
+            continue
+        key = hashlib.sha256(str(source).encode("utf-8")).hexdigest()[:12]
+        actions.append(_action(
+            f"director-rename-{key}",
+            "rename_dir",
+            source=source,
+            target=expected,
+            evidence="v1.3.3 separator migration: normalize foreign Chinese name segments to U+00B7",
+            rollback="rename normalized director directory back to source directory",
+            preconditions=["all child bundle actions and wrapper archives succeeded", "source director exists", "target absent"],
+            postconditions=["source director absent", "normalized director exists"],
+        ))
+    return actions
 
 
 def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, object]:
@@ -706,12 +974,23 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
             _mark_exception(owner, f"target collision with {source_value}")
         else:
             destination_owners[destination_key] = bundle
+    # A director target collision is a batch-level conflict: no child of that
+    # director may mutate while the parent cannot be renamed safely.
+    _mark_director_target_collisions(root, bundles)
+    wrapper_actions = _plan_wrapper_actions(root, bundles)
+    director_actions = _plan_director_actions(root, bundles)
     summary = {
         "total_units": len(bundles),
         "naming_pass": sum(item["status"] == "NAMING_PASS" for item in bundles),
         "action_required": sum(item["status"] == "ACTION_REQUIRED" for item in bundles),
         "exception": sum(item["status"] == "EXCEPTION" for item in bundles),
-        "planned_actions": sum(len(item["actions"]) for item in bundles),
+        "planned_actions": (
+            sum(len(item["actions"]) for item in bundles)
+            + len(wrapper_actions)
+            + len(director_actions)
+        ),
+        "wrapper_archives": sum(1 for item in wrapper_actions if item.get("action") == "rename_dir"),
+        "director_renames": len(director_actions),
     }
     inventory_payload = [
         {"parent": str(parent), "videos": [str(video) for video in videos]}
@@ -730,8 +1009,10 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "summary": summary,
         "bundles": bundles,
+        "wrapper_actions": wrapper_actions,
+        "director_actions": director_actions,
     }
-    report["plan_hash"] = _plan_signature(bundles)
+    report["plan_hash"] = _plan_signature(bundles, wrapper_actions, director_actions)
 
     if persist:
         _validate_recovery_tree(root)
@@ -752,9 +1033,28 @@ def _validate_action(
     action: Dict[str, object], root: Path, planned_dirs: Optional[set[Path]] = None
 ) -> Optional[str]:
     name = str(action.get("action", action.get("type", "")))
-    target = _canonical(str(action.get("target", "")))
+    target_lexical = _lexical(str(action.get("target", "")))
+    target = _canonical(target_lexical)
     source_value = action.get("source")
-    source = _canonical(str(source_value)) if source_value else None
+    source_lexical = _lexical(str(source_value)) if source_value else None
+    source = _canonical(source_lexical) if source_lexical is not None else None
+    try:
+        target_mode = os.lstat(target_lexical).st_mode
+    except FileNotFoundError:
+        target_mode = None
+    except OSError as error:
+        return f"target cannot be inspected: {error}"
+    if target_mode is not None and stat.S_ISLNK(target_mode):
+        return f"target must not be a symlink: {target_lexical}"
+    if source_lexical is not None:
+        try:
+            source_mode = os.lstat(source_lexical).st_mode
+        except FileNotFoundError:
+            source_mode = None
+        except OSError as error:
+            return f"source cannot be inspected: {error}"
+        if source_mode is not None and stat.S_ISLNK(source_mode):
+            return f"source must not be a symlink: {source_lexical}"
     if not _inside(root, target, allow_root=False):
         return f"outside task root: {target}"
     if source is not None and not _inside(root, source, allow_root=False):
@@ -764,24 +1064,24 @@ def _validate_action(
     if planned_dirs is None:
         planned_dirs = set()
     if name == "mkdir":
-        if target.exists():
-            return f"mkdir target exists: {target}"
-        if not target.parent.is_dir():
-            return f"mkdir parent missing: {target.parent}"
+        if target_mode is not None:
+            return f"mkdir target exists: {target_lexical}"
+        if not target_lexical.parent.is_dir():
+            return f"mkdir parent missing: {target_lexical.parent}"
     elif name == "move_file":
-        if source is None or not source.is_file():
-            return f"missing source: {source}"
-        if target.exists():
-            return f"target exists: {target}"
-        if not target.parent.is_dir() and _canonical(target.parent) not in planned_dirs:
-            return f"target parent missing: {target.parent}"
+        if source is None or source_mode is None or not stat.S_ISREG(source_mode):
+            return f"missing source: {source_lexical if source_lexical is not None else source}"
+        if target_mode is not None:
+            return f"target exists: {target_lexical}"
+        if not target_lexical.parent.is_dir() and _canonical(target_lexical.parent) not in planned_dirs:
+            return f"target parent missing: {target_lexical.parent}"
     else:
-        if source is None or not source.is_dir():
-            return f"missing source directory: {source}"
-        if target.exists():
-            return f"target directory exists: {target}"
-        if not target.parent.is_dir() and _canonical(target.parent) not in planned_dirs:
-            return f"target parent missing: {target.parent}"
+        if source is None or source_mode is None or not stat.S_ISDIR(source_mode):
+            return f"missing source directory: {source_lexical if source_lexical is not None else source}"
+        if target_mode is not None:
+            return f"target directory exists: {target_lexical}"
+        if not target_lexical.parent.is_dir() and _canonical(target_lexical.parent) not in planned_dirs:
+            return f"target parent missing: {target_lexical.parent}"
     return None
 
 
@@ -806,7 +1106,7 @@ def _verify_bundle(bundle: Dict[str, object], root: Path) -> List[str]:
             if source_video != expected_video and source_video.exists():
                 problems.append(f"old source still exists: {source_video}")
         source_dir = _canonical(str(bundle.get("source_movie_dir", "")))
-        if bundle.get("source_shape") == "standard" and source_dir != expected_dir and source_dir.exists():
+        if source_dir != expected_dir and source_dir.exists():
             problems.append(f"old movie dir still exists: {source_dir}")
         expected_targets = {
             _canonical(str(target))
@@ -833,10 +1133,15 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
         return "plan standard_id mismatch"
     if plan.get("naming_contract_sha256") != EXPECTED_NAMING_CONTRACT_SHA256:
         return "plan naming-contract hash mismatch"
+    for key in ("wrapper_actions", "director_actions"):
+        if not isinstance(plan.get(key, []), list):
+            return f"plan {key} missing or invalid"
     plan_hash = plan.get("plan_hash")
     if not isinstance(plan_hash, str) or not plan_hash:
         return "plan hash missing"
-    if plan_hash != _plan_signature(plan.get("bundles", [])):
+    if plan_hash != _plan_signature(
+        plan.get("bundles", []), plan.get("wrapper_actions", []), plan.get("director_actions", [])
+    ):
         return "plan hash mismatch"
     return None
 
@@ -935,6 +1240,24 @@ def _matching_recovery_result(
     return False
 
 
+def _verify_auxiliary_actions(plan: Dict[str, object], root: Path) -> List[str]:
+    problems: List[str] = []
+    for key in ("wrapper_actions", "director_actions"):
+        for action in plan.get(key, []):
+            name = str(action.get("action", action.get("type", "")))
+            target = _canonical(str(action.get("target", "")))
+            source_value = action.get("source")
+            source = _canonical(str(source_value)) if source_value else None
+            if name == "mkdir" and not target.is_dir():
+                problems.append(f"missing auxiliary directory target: {target}")
+            elif name == "rename_dir":
+                if source is not None and source.exists():
+                    problems.append(f"old auxiliary directory still exists: {source}")
+                if not target.is_dir():
+                    problems.append(f"missing auxiliary directory target: {target}")
+    return problems
+
+
 def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
     root_path = _canonical(root)
     integrity_error = _plan_integrity_error(plan, root_path)
@@ -949,6 +1272,7 @@ def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
     for bundle in plan.get("bundles", []):
         if bundle.get("status") in {"NAMING_PASS", "ACTION_REQUIRED"}:
             missing.extend(_verify_bundle(bundle, root_path))
+    missing.extend(_verify_auxiliary_actions(plan, root_path))
     return {
         "status": "PASS" if not missing else "FAIL",
         "naming_plan_only": True,
@@ -967,7 +1291,7 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             "error_summary": "plan task_root mismatch or outside task root",
         }
 
-    actions: List[Dict[str, object]] = []
+    bundle_actions: List[Dict[str, object]] = []
     planned_dirs: set[Path] = set()
     for bundle in plan.get("bundles", []):
         if bundle.get("status") != "ACTION_REQUIRED":
@@ -976,7 +1300,17 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             failure = _validate_action(action, root_path, planned_dirs)
             if failure:
                 return {"status": "FAIL", "executed_actions": 0, "error_summary": failure}
-            actions.append(action)
+            bundle_actions.append(action)
+            if str(action.get("action", action.get("type", ""))) == "mkdir":
+                planned_dirs.add(_canonical(str(action["target"])))
+
+    wrapper_actions = list(plan.get("wrapper_actions", []))
+    director_actions = list(plan.get("director_actions", []))
+    for phase_actions in (wrapper_actions, director_actions):
+        for action in phase_actions:
+            failure = _validate_action(action, root_path, planned_dirs)
+            if failure:
+                return {"status": "FAIL", "executed_actions": 0, "error_summary": failure}
             if str(action.get("action", action.get("type", ""))) == "mkdir":
                 planned_dirs.add(_canonical(str(action["target"])))
 
@@ -988,24 +1322,50 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
         return {
             "status": "PASS",
             "dry_run": True,
-            "planned_actions": len(actions),
+            "planned_actions": len(bundle_actions) + len(wrapper_actions) + len(director_actions),
             "executed_actions": 0,
             "error_summary": "",
         }
 
     executed = 0
-    try:
-        for action in actions:
+    def execute_phase(phase_actions: Sequence[Dict[str, object]], phase_name: str) -> Optional[str]:
+        nonlocal executed
+        for action in phase_actions:
+            # The filesystem may change between global preflight and this
+            # action. Re-lstat source/target immediately before every mutate.
+            failure = _validate_action(action, root_path, planned_dirs)
+            if failure:
+                return failure
             name = str(action.get("action", action.get("type", "")))
-            target = _canonical(str(action["target"]))
-            if name == "mkdir":
-                target.mkdir()
-            else:
-                source = _canonical(str(action["source"]))
-                source.rename(target)
+            if phase_name == "wrapper" and name == "rename_dir":
+                source = _lexical(str(action["source"]))
+                safe, reason = _wrapper_is_empty_skeleton(source)
+                if not safe:
+                    return reason
+            target = _lexical(str(action["target"]))
+            try:
+                if name == "mkdir":
+                    target.mkdir()
+                else:
+                    source = _lexical(str(action["source"]))
+                    source.rename(target)
+            except OSError as error:
+                return f"apply failed: {error}"
             executed += 1
-    except OSError as error:
-        return {"status": "FAIL", "executed_actions": executed, "error_summary": f"apply failed: {error}"}
+        return None
+
+    for phase_name, phase_actions in (
+        ("bundle", bundle_actions),
+        ("wrapper", wrapper_actions),
+        ("director", director_actions),
+    ):
+        phase_error = execute_phase(phase_actions, phase_name)
+        if phase_error:
+            return {
+                "status": "FAIL",
+                "executed_actions": executed,
+                "error_summary": f"{phase_name} phase blocked: {phase_error}",
+            }
 
     verification = verify_plan(plan, root_path)
     if verification["status"] != "PASS":

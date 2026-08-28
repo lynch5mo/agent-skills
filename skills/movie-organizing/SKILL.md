@@ -6,7 +6,7 @@ description: >-
   within an explicitly bounded TASK_ROOT.
 license: MIT
 metadata:
-  version: "1.3.3"
+  version: "1.3.4"
   author: lynch5mo
   tags: [media, movie-library, batch-plan]
   trigger: User asks to normalize, rehome, deduplicate, or quality-select a mixed movie library in batches.
@@ -14,7 +14,7 @@ metadata:
 
 # Movie Organizing
 
-## v1.3.3 入口完整性与固定命令顺序（硬门禁）
+## v1.3.4 入口完整性与固定命令顺序（硬门禁）
 
 每个任务开始时，必须先验证已安装 Skill 的关键文件完整性；验证失败不得处理媒体。命令顺序固定为：
 
@@ -34,7 +34,7 @@ python3 "$SKILL_DIR/scripts/movie_organizing_audit.py" audit --task-root "$TASK_
 
 `apply` 与 `verify` 必须显式传入该次 `plan` 输出的 `--plan`；计划文件必须是当前 `TASK_ROOT/_work-record_/recovery/` 下的 canonical、regular、非 symlink JSON，且 schema/version/standard_id/naming_contract_sha256/scan_id/plan_path 与当前生成合同一致。正式 apply（不带 `--dry-run`）只有在同一 TASK_ROOT、同一 plan_hash 的成功 dry-run recovery 证据已落盘时才可执行，否则零 mutation 失败；verify 只接受同一计划的成功正式 apply 证据，不能自行补生成计划或把局部 PASS 当成完成。
 
-`audit` 先验证 TASK_ROOT 内 recovery/control 路径没有 symlink 或越界实体，再做 fresh active tree 的 `CORE_GATE`；随后仅在 CORE PASS 后让**所有 active 电影单元（包括 `NAMING_PASS`）**参加跨目录重复候选扫描，最后执行浅层 cleanup 终扫。pending/trash/work-record 均排除，非空 pending 即保留待确认计数。它只输出候选和证据，不按名称或大小自动删除。
+`audit` 先验证 TASK_ROOT 内 recovery/control 路径没有 symlink 或越界实体，再做 fresh active tree 的 `CORE_GATE`；随后仅在 CORE PASS 后让**所有 active 电影单元（包括 `NAMING_PASS`）**参加跨目录重复候选扫描，最后执行浅层 cleanup 终扫。pending/trash/work-record 均排除，非空 pending 即保留待确认计数。它只输出候选和证据，不按名称或大小自动删除。预处理器会把可确定的嵌套影片拍平到导演根；已证明只剩空目录骨架的 wrapper 会可逆归档到 `_work-record_/flattened-empty/`，不能把仍含文件、媒体或 symlink 的 wrapper 当作完成。
 
 活动树没有任何主视频（`active_video_units=0`，包括只有空壳、pending 或 root trash 的根）时 CORE 必须失败并保持 BLOCKED。`_work-record_`、`_待确认_`、`_trash_*` 仅允许出现在 TASK_ROOT 根层；导演夹或电影夹中的同名条目属于 cleanup 违规，不能藏视频绕过终扫。
 审计 JSON 固定包含 `core_gate`、`dedupe_gate`、`cleanup_gate`、`counts`、`candidate_groups`、`pending_count`、`completion_status`、`allowed_completion_message` 和 `report_path`；CORE 失败时 `dedupe_gate.status=NOT_RUN` 且命令返回非零。`completion_status` 只允许 `BLOCKED`、`CORE_COMPLETE_PENDING`、`COMPLETE`，后两态返回零；候选/异常/终扫清单最多各处理 10–20 项一批。
@@ -136,10 +136,16 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 `魔鬼的陷阱.Dablova past.1962/Dablova past.1962.720p.HDTV.x264-DON.mkv` 必须先得到
 `魔鬼的陷阱.Dablova past.1962.720p.HDTV.x264-DON/`，视频名已合规则则保持不变。
 
+导演夹会按合同确定性规范化：中文段与英文段之间恰好一个 ASCII 空格；v1.3.3 迁移格式中外国导演中文译名内部的 ASCII 空格/`.` 统一改为 U+00B7 `·`，已有 `·`、原生中文姓名和多导演 `、` 保留。若中英边界、中文姓名片段或分隔符不能唯一解析，输出 `EXCEPTION`，不猜名。导演同名目标碰撞、大小写/Unicode 碰撞或该导演任一子项异常时，禁止父目录改名。
+
 导演夹下的孤立视频仅在视频中文前缀或同 stem NFO 的 title/originaltitle 提供可靠中文名时，才在
 **该导演夹内**创建最终电影夹并连同明确 sidecar 移入；没有可靠中文名绝不猜名或创建英文-only 目录。
 多视频/合集、DVD/BDMV、年份冲突、目标冲突、路径越界、Unicode/大小写歧义和无法提取中文名一律
 输出 `EXCEPTION`，不修改。无 NFO 的普通电影可以通过；脚本不做导演归类、合集拆分、去重或 trash。
+
+导演夹下任意有限深度的单视频 leaf（包括 `导演/outer1/outer2/电影夹/视频`）均可确定时拍平到
+`TASK_ROOT/<规范导演夹>/<标准电影夹>/`。标准 leaf 的子文件先改名，再将电影夹跨 wrapper rehome；非标准 nested leaf 只有视频中文前缀或同 stem NFO 提供中文名时才建夹并移动。所有受影响 leaf 成功移出后，若最上层 wrapper 已证明无任何文件、媒体或 symlink、只剩空目录骨架，才将它**一次性可逆改名**到
+`TASK_ROOT/_work-record_/flattened-empty/<稳定键>-<原名>/`，保留 rollback 证据；wrapper 有异常、未知文件、目标碰撞或无法证明为空时，相关单元整体 `EXCEPTION`，零 mutation。root-level video 仍为 `EXCEPTION`。
 
 `ACTION_REQUIRED` 的脚本 apply 与 verify 均 PASS 后，Agent 才能继续本节后续的导演/合集慢通道；
 `EXCEPTION` 只能按第 6 阶段处理，不能临场猜测。重复运行脚本必须保持幂等并得到
@@ -147,13 +153,13 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 先为每个视频单元计算并写入工作单，再按路径事实判断状态，不把全库先放进 `明确/待查/冲突` 深分流。至少记录：
 
-- `expected_director_dir`、`expected_movie_dir`、`expected_video_path`；
+- `source_director_dir`、`expected_director_dir`、`expected_movie_dir`、`expected_video_path`；
 - 现有 NFO 的 `expected_nfo_path`（缺失也记录）和每个字幕的 `expected_subtitle_paths`；
 - `source_shape`：`standard`、`orphan`、`dispersed` 或 `collection`。
 
 这些字段必须在分类前生成，且基于命名合同、已闭环的身份/导演/年份/release 事实；缺失 NFO/字幕要明确记录缺失，不能用占位动作代替，字段缺失不得进入计划。
 
-- `NAMING_PASS`：仅当所有存在的导演夹、电影夹、视频、NFO、字幕的**实际路径逐字等于对应 expected 路径**，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无目标碰撞；无动作。它只表示命名阶段合格：在 `CORE_GATE` 之前不读取 NFO/运行 `ffprobe`/查 IMDb/算 hash，也不做去重；通过 CORE 后必须与其他 active 电影一起进入 `DEDUPE_GATE` 候选扫描。不得凭“看起来规范”自报。
+- `NAMING_PASS`：仅当所有存在的导演夹、电影夹、视频、NFO、字幕的**实际路径逐字等于对应 expected 路径**，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无目标碰撞；无动作。nested leaf 不是 `standard`，即使电影夹名字正确也必须 rehome。它只表示命名阶段合格：在 `CORE_GATE` 之前不读取 NFO/运行 `ffprobe`/查 IMDb/算 hash，也不做去重；通过 CORE 后必须与其他 active 电影一起进入 `DEDUPE_GATE` 候选扫描。不得凭“看起来规范”自报。
 - `ACTION_REQUIRED`：目标唯一但需要合同规定的语法规范化，或 `source_shape` 为 `orphan`、`dispersed`、`collection`，或缺失标准目录；必须按计划创建目录、改名并 rehome，不能当作无动作通过。纯语法动作仍须生成完整 bundle，不改变电影身份、导演、年份事实或 release token。
 - `EXCEPTION`：身份、导演、年份、归属或主视频不明，特殊容器/结构，多版本或重复关系，Unicode/实体边界，sidecar 配对不明，或任何目标碰撞/不可逆风险。不得临时加后缀、覆盖或猜名。
 
@@ -161,13 +167,13 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 ### 4. Naming bundle 与 10–20 项锁定计划
 
-对每个 `ACTION_REQUIRED` 视频单元生成一条完整 bundle：`expected_*`、`source_shape`、导演夹 old/new、电影夹 old/new、主视频 old/new、现有 NFO old/new（无 NFO 显式记录缺失且不补造）、每个现有字幕 old/new、必要 `mkdir`/`rehome`、合同明确垃圾的预锁映射（此处只记录，不提前执行）、依据和回滚路径。任何缺项、歧义或目标碰撞都降为 `EXCEPTION`。
+对每个 `ACTION_REQUIRED` 视频单元生成一条完整 bundle：`source_director_dir`/`expected_director_dir`、`expected_*`、`source_shape`、导演夹 old/new、电影夹 old/new、主视频 old/new、现有 NFO old/new（无 NFO 显式记录缺失且不补造）、每个现有字幕 old/new、必要 `mkdir`/`rehome`、合同明确垃圾的预锁映射（此处只记录，不提前执行）、依据和回滚路径。计划另列每个 wrapper 的一次性 `rename_dir` 归档动作和每个导演唯一的 `rename_dir` 动作；任何缺项、歧义或目标碰撞都降为 `EXCEPTION`。
 
 按一个导演或有限文件块生成 10–20 个视频单元的原子计划并锁定 hash。计划级必须有 `scan_id/standard_id/plan_hash`；公共动作字段必须有 `id/action/target/evidence/rollback/preconditions/postconditions`；`rename`/`rehome`/`trash` 另必须有 `source`，`mkdir` 不设置伪 `source`，只要求锁定 target 不存在且为 canonical `TASK_ROOT` 后代。改名/rehome 要求 `old exists`、`new absent`；回滚不得 `rmdir`，任务创建的空目录只能可逆 `mv` 到本任务 trash。`trash_target` 仅用于后续 trash 动作，`content_hash` 仅用于去重证据；禁止 `sentinel`/`__KEEP__`/`__SKIP__`、`old==new`、重复目标和缺字段。
 
 ### 5. 命名复扫与早退出
 
-计划验核通过后，按形态执行该批明确 bundle：**必要目标目录（计划内 mkdir）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 导演夹定位/改名 → 现场复扫**。对已有容器仍坚持子项先、父目录后；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。每个执行项必须证明 old path 已消失、new path 已存在且逐字等于 expected path；子项复扫 PASS 后才允许改父目录。此序列不执行普通 trash。
+计划验核通过后，按形态执行该批明确 bundle：**必要目标目录（计划内 mkdir）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 所有受影响 wrapper 影片动作完成后一次性可逆归档空骨架 → 所有子项复扫 PASS 后每个导演只执行一次导演夹改名 → 现场复扫**。对已有容器仍坚持子项先、父目录后；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。每个执行项必须证明 old path 已消失、new path 已存在且逐字等于 expected path；wrapper 归档只能针对已证明无文件、媒体或 symlink 的空目录骨架，目标为 `TASK_ROOT/_work-record_/flattened-empty/`，不得删除或藏入未处理内容。此序列不执行普通 trash。
 
 `NAMING_PASS` 项在 `CORE_GATE` 前不回到深查：禁止提前读 NFO 内容、运行 `ffprobe`、查 IMDb、计算 hash、去重或深度归类；它在 CORE 后与全部 active 电影一并接受候选扫描和 Agent 的版本/质量查证。复扫失败按 B13/B04 处理，不以返回码代替现场验收。
 
@@ -208,9 +214,9 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 ## 执行顺序（硬规则）
 
-通过计划门禁后，固定按同一 bundle 执行：**必要目标目录（计划内 mkdir）→ 视频 → NFO/字幕 → 电影夹定位/改名 → 导演夹定位/改名 → 现场复扫**；`CORE_GATE` 通过后才允许 **去重 → `DEDUPE_GATE` → 普通 trash/清理 → 终扫**。每条记录 `old/new/bytes/sidecar/expected path/证据路径`；任何执行中发现的新事实都停止受影响项并按 B 卡处理，不临场改计划。
+通过计划门禁后，固定按同一 bundle 执行：**必要目标目录（计划内 mkdir）→ 视频 → NFO/字幕 → 电影夹定位/改名 → wrapper 空骨架可逆归档 → 每个导演唯一导演夹改名 → 现场复扫**；`CORE_GATE` 通过后才允许 **去重 → `DEDUPE_GATE` → 普通 trash/清理 → 终扫**。每条记录 `old/new/bytes/sidecar/expected path/证据路径`；任何执行中发现的新事实都停止受影响项并按 B 卡处理，不临场改计划。
 
-导演夹只有在该导演全部受影响子项都已闭环、复扫 PASS 且目标不冲突时才允许最后改名；否则若旧夹/影片单元仍在 active tree，`CORE_GATE` 必须失败；可安全隔离时将最小完整单元移入 `_待确认_` 后主目录继续。所有 trash/pending 均保留原相对结构并留可逆证据。
+导演夹只有在该导演全部受影响子项都已闭环、wrapper 已按规则归档、复扫 PASS 且目标不冲突时才允许最后改名；同一导演计划只生成一次 `rename_dir`。若旧夹/影片单元仍在 active tree，`CORE_GATE` 必须失败；可安全隔离时将最小完整单元移入 `_待确认_` 后主目录继续。所有 trash/pending/flattened-empty 均保留来源、目标和可逆证据。
 
 ## 中断、分类与回收
 
@@ -226,13 +232,13 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 - [failure-handling.md](references/failure-handling.md)
 - [lessons-and-audit-checklist.md](references/lessons-and-audit-checklist.md)
 
-## v1.3 实操补充（2026-08-28 捷克库实测）
+## v1.3.4 实操补充（2026-08-28 捷克库实测）
 
 以下规则从捷克库（CIFS/NAS 大批量混合库）实操中总结，是对上述阶段门禁的补充，不替代任何硬约束；命名合同、ACTION_REQUIRED bundle、CORE_GATE/DEDUPE_GATE 与可逆安全边界始终优先。
 
 ### 导演夹间隔号合规
 
-导演夹中 `·`（U+00B7 MIDDLE DOT，中文间隔号）是外国人名的标准排版惯例，且不同于合同“禁点格式”所禁止的 ASCII `.`（句点/英文点）；但当前命名合同明确要求导演夹 `中文名 EnglishName`（空格式、禁点格式），所以 `中文名·英文名` 只能作为实操库事实记录，不能据此 `NAMING_PASS`，必须按 `ACTION_REQUIRED` 规范为空格格式或进入 `EXCEPTION`/`_待确认_`。
+导演夹中 `·`（U+00B7 MIDDLE DOT，中文间隔号）是外国人名中文译名内部的标准分隔符，且不同于电影/视频文件名中的 ASCII `.`。导演夹必须是 `中文段 EnglishName`，中英之间恰好一个 ASCII 空格；v1.3.3 迁移格式中可唯一解析的外国中文姓名片段使用 `·`，多导演使用 `、`，原生中文姓名不新增 `·`。已有 `·` 不得改掉；ASCII `.` 或姓名片段空格必须在预处理器中改为 `·`。边界、片段或字符不明确时输出 `EXCEPTION`，禁止猜名。
 
 ### 括号式→点式自动转换
 

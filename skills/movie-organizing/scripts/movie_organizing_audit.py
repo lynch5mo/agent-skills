@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.3"
+VERSION = "1.3.4"
 WORK_RECORD_DIR = "_work-record_"
 RECOVERY_DIR = "recovery"
 PENDING_DIR = "_待确认_"
@@ -268,36 +268,58 @@ def _limit(items: Iterable[Dict[str, Any]], limit: int = 20) -> List[Dict[str, A
 
 
 def _director_name_is_conforming(name: str) -> bool:
-    """Conservatively require ``中文段 English段`` for active directors."""
+    """Require exact ``中文段 EnglishName`` with U+00B7 foreign separators."""
 
     stripped = name.strip()
-    if not stripped or "." in stripped:
+    if stripped != name:
         return False
-    parts = stripped.split(None, 1)
-    if len(parts) != 2:
+    boundary = next(
+        (index for index, char in enumerate(stripped)
+         if "LATIN" in unicodedata.name(char, "") or (char.isascii() and char.isalpha())),
+        -1,
+    )
+    if boundary <= 0:
         return False
-    chinese_part, english_part = parts
-    has_cjk = any("CJK UNIFIED IDEOGRAPH" in unicodedata.name(char, "") for char in chinese_part)
-    chinese_part_is_non_latin = not re.search(r"[A-Za-z]", chinese_part)
-    has_english = bool(re.search(r"[A-Za-z]", english_part))
-    return has_cjk and chinese_part_is_non_latin and has_english
+    separator = boundary - 1
+    if stripped[separator] != " " or (separator > 0 and stripped[separator - 1].isspace()):
+        return False
+    chinese_part = stripped[:separator]
+    english_part = stripped[boundary:]
+    if not chinese_part or not english_part:
+        return False
+    if any(char.isspace() for char in chinese_part) or "." in chinese_part:
+        return False
+    if any("CJK UNIFIED IDEOGRAPH" not in unicodedata.name(char, "") and char not in "·、" for char in chinese_part):
+        return False
+    if any("CJK UNIFIED IDEOGRAPH" in unicodedata.name(char, "") for char in english_part):
+        return False
+    if not any("LATIN" in unicodedata.name(char, "") or (char.isascii() and char.isalpha()) for char in english_part):
+        return False
+    pieces = [piece for piece in re.split(r"[·、]+", chinese_part) if piece]
+    return bool(pieces) and all(
+        all("CJK UNIFIED IDEOGRAPH" in unicodedata.name(char, "") for char in piece)
+        for piece in pieces
+    )
 
 
 def _director_violations(root: Path, plan: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Check active director dirs represented by this fresh video plan."""
+    """Check both source and expected active director anchors."""
 
     directors: Dict[Path, Dict[str, str]] = {}
     for bundle in plan.get("bundles", []):
-        director_value = bundle.get("expected_director_dir")
-        if not director_value:
-            continue
-        director = _canonical(str(director_value))
-        if director.parent != _canonical(root) or not _active_path(root, director):
-            continue
-        directors[director] = {
-            "path": str(director),
-            "reason": "director folder must contain a Chinese segment, a space, and an English segment",
-        }
+        for key in ("source_director_dir", "expected_director_dir"):
+            director_value = bundle.get(key)
+            if not director_value:
+                continue
+            director = _canonical(str(director_value))
+            if director == _canonical(root) or director.parent != _canonical(root) or not _active_path(root, director):
+                continue
+            if not director.exists() or not director.is_dir():
+                continue
+            directors[director] = {
+                "path": str(director),
+                "reason": "director folder must use one ASCII space and U+00B7 within foreign Chinese names",
+            }
     return [
         item
         for path, item in sorted(directors.items(), key=lambda item: str(item[0]))

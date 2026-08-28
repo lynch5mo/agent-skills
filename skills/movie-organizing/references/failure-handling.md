@@ -68,7 +68,7 @@
 
 - 触发：空格、单引号、重音、特殊字符导致读写失败。
 - 禁止：拼字符字符串猜测路径；命令行临时尝试路径。
-- 处理：以 `scandir` 返回实体为准校验，不改名不猜名，只在证据可复核后执行可逆操作。
+- 处理：以 `scandir` 返回实体为准校验；导演中文译名只按可唯一解析的 v1.3.3 迁移分隔符规则把 ASCII 空格/`.` 改为 U+00B7 `·`，不猜姓名。目标存在、Unicode/case 碰撞或边界不明时不改名，相关导演及子项转 `EXCEPTION`。
 - 通过：逐字与实体路径一致，证据链完整。
 - 未通过：该条冻结或待确认，不扩大范围。
 
@@ -128,7 +128,7 @@
 - 触发：工作单/Agent 声称完成但任一 expected 路径不精确、旧名/非规范 NFO/字幕仍在、孤立视频/合集容器/错误导演归属仍在 active tree，或任一 CORE/DEDUPE 计数（含 `active_nonconforming_nfo_files`、`active_nonconforming_subtitle_files`、`unresolved_duplicate_groups_in_active_tree`）非零；也包括“扫描完成”“计划生成”“命令零退出”被当作动作完成，或原地冻结被当作待确认归零。
 - 不可合理化：扫描完成 ≠ 改名完成；计划生成 ≠ 动作执行；命令零退出 ≠ 现场 PASS；旧名仍在 ≠ 完成；原地冻结 ≠ 待确认归零。
 - 禁止：用返回码、工作单状态或“看起来规范”替代现场核验；不得在 CORE_GATE/DEDUPE_GATE 未通过时发完成语义。
-- 处理：回到 B04；恢复未执行项，逐条核验 `old/new/sidecar/expected`，重算 CORE/DEDUPE 计数，更新工作单与批次状态。
+- 处理：回到 B04；恢复未执行项，逐条核验 `old/new/sidecar/expected`，重算 CORE/DEDUPE 计数，更新工作单与批次状态。多层 wrapper 只有在全部可确定 leaf 已移出、递归无文件/媒体/symlink、只剩空目录骨架时，才可按计划一次性可逆改名到 `_work-record_/flattened-empty/`；wrapper 残留未知内容或异常单元时零 mutation，不能以“拍平完成”自报。
 - 通过：现场扫描、expected 路径、计划、工作单及全部门禁计数完全一致。
 - 未通过：该条回到待确认或冻结；冻结项仍在 active tree 时门禁保持失败，其它明确条目继续。
 

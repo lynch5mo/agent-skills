@@ -507,6 +507,88 @@ class MovieOrganizingAuditTest(unittest.TestCase):
             self.assertEqual("NOT_RUN", report["cleanup_gate"]["status"])
             self.assertEqual(0, report["core_gate"]["counts"]["active_video_units"])
 
+    def test_v134_audit_requires_middle_dot_for_foreign_chinese_director_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._add_standard_movie(
+                root,
+                "爱德嘉 莱兹 Edgar Reitz",
+                "影.Original Movie.1949.1080p.BluRay.x264-RLS",
+                "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
+            )
+            process, report = self._audit(root)
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("FAIL", report["core_gate"]["status"])
+            self.assertGreaterEqual(report["core_gate"]["counts"]["active_nonconforming_director_dirs"], 1)
+            self.assertEqual("BLOCKED", report["completion_status"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._add_standard_movie(
+                root,
+                "爱德嘉·莱兹 Edgar Reitz",
+                "影.Original Movie.1949.1080p.BluRay.x264-RLS",
+                "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
+            )
+            process, report = self._audit(root)
+            self.assertEqual(0, process.returncode)
+            self.assertEqual("PASS", report["core_gate"]["status"])
+            self.assertEqual("COMPLETE", report["completion_status"])
+
+    def test_v134_audit_requires_exactly_one_ascii_space_at_director_boundary(self):
+        invalid_names = (
+            "爱德嘉·莱兹  Edgar Reitz",
+            "爱德嘉·莱兹\tEdgar Reitz",
+            "爱德嘉·莱兹Edgar Reitz",
+        )
+        for director in invalid_names:
+            with self.subTest(director=director), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                self._add_standard_movie(
+                    root,
+                    director,
+                    "影.Original Movie.1949.1080p.BluRay.x264-RLS",
+                    "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
+                )
+                process, report = self._audit(root)
+                self.assertNotEqual(0, process.returncode)
+                self.assertEqual("FAIL", report["core_gate"]["status"])
+                self.assertGreaterEqual(report["core_gate"]["counts"]["active_nonconforming_director_dirs"], 1)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._add_standard_movie(
+                root,
+                "爱德嘉·莱兹 Edgar Reitz",
+                "影.Original Movie.1949.1080p.BluRay.x264-RLS",
+                "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
+            )
+            process, report = self._audit(root)
+            self.assertEqual(0, process.returncode)
+            self.assertEqual("PASS", report["core_gate"]["status"])
+
+    def test_v134_wrapper_residue_after_flatten_blocks_cleanup_completion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            movie = self._add_standard_movie(
+                root,
+                "导演 Director",
+                "outer1/outer2/标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
+                "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
+            )
+            # This models wrappers left after a nested movie has been moved to
+            # the director root; cleanup must not silently treat them as done.
+            flattened = root / "导演 Director" / "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS"
+            movie.rename(flattened)
+
+            process, report = self._audit(root)
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("PASS", report["core_gate"]["status"])
+            self.assertEqual("PASS", report["dedupe_gate"]["status"])
+            self.assertEqual("FAIL", report["cleanup_gate"]["status"])
+            self.assertGreaterEqual(report["cleanup_gate"]["counts"]["active_non_whitelist_items"], 1)
+            self.assertEqual("BLOCKED", report["completion_status"])
+
     def test_install_verifier_rejects_truncated_or_tampered_script(self):
         with tempfile.TemporaryDirectory() as tmp:
             copied_skill = Path(tmp) / "movie-organizing"
