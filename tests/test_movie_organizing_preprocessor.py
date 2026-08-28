@@ -1,7 +1,12 @@
+import contextlib
+import io
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from importlib.machinery import SourceFileLoader
@@ -46,6 +51,96 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
                 if source.endswith(video_stem + ".mkv"):
                     return item
         raise AssertionError(f"bundle for {video_stem} not found")
+
+    def test_apply_result_write_failure_is_nonzero_and_preserves_executed_actions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "影迷.The.Movie.2019"
+            video = self._make(src_dir, "The.Movie.2019.1080p.BluRay.x264-GRP.mkv")
+            plan = self._plan(root)
+            self.assertEqual("ACTION_REQUIRED", self._find_bundle(plan, video.stem)["status"])
+
+            dry_run_output = io.StringIO()
+            with contextlib.redirect_stdout(dry_run_output):
+                dry_run_exit = preprocessor.main(
+                    [
+                        "apply",
+                        "--task-root",
+                        str(root),
+                        "--plan",
+                        str(plan["plan_path"]),
+                        "--dry-run",
+                    ]
+                )
+            self.assertEqual(0, dry_run_exit)
+
+            output = io.StringIO()
+            with mock.patch.object(preprocessor, "_write_result", side_effect=OSError("disk full")):
+                with contextlib.redirect_stdout(output):
+                    exit_code = preprocessor.main(
+                        ["apply", "--task-root", str(root), "--plan", str(plan["plan_path"])]
+                    )
+
+            result = json.loads(output.getvalue())
+            self.assertNotEqual(0, exit_code)
+            self.assertEqual("FAIL", result["status"])
+            self.assertGreaterEqual(result["executed_actions"], 1)
+            self.assertIn("result write failed", result["error_summary"].lower())
+            self.assertIn("result_write_error", result)
+
+    def test_verify_result_write_failure_is_nonzero_and_explicitly_not_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            movie_dir = root / "导演 Director" / "标准片.Standard Movie.2020.1080p.BluRay.x264-GRP"
+            self._make(movie_dir, "Standard Movie.2020.1080p.BluRay.x264-GRP.mkv")
+            plan = self._plan(root)
+            self.assertEqual("NAMING_PASS", plan["bundles"][0]["status"])
+
+            output = io.StringIO()
+            with mock.patch.object(preprocessor, "_write_result", side_effect=OSError("read-only")):
+                with contextlib.redirect_stdout(output):
+                    exit_code = preprocessor.main(
+                        ["verify", "--task-root", str(root), "--plan", str(plan["plan_path"])]
+                    )
+
+            result = json.loads(output.getvalue())
+            self.assertNotEqual(0, exit_code)
+            self.assertEqual("FAIL", result["status"])
+            self.assertTrue(result["naming_plan_only"])
+            self.assertIn("result write failed", result["error_summary"].lower())
+            self.assertIn("result_write_error", result)
+
+    def test_plan_refuses_work_record_or_recovery_symlink_outside_root(self):
+        for symlink_target in ("work-record", "recovery"):
+            with self.subTest(symlink_target=symlink_target), tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external_tmp:
+                root = Path(tmp)
+                external = Path(external_tmp)
+                movie_dir = root / "导演 Director" / "标准片.Standard Movie.2020.1080p.BluRay.x264-GRP"
+                self._make(movie_dir, "Standard Movie.2020.1080p.BluRay.x264-GRP.mkv")
+                if symlink_target == "work-record":
+                    os.symlink(str(external), str(root / "_work-record_"), target_is_directory=True)
+                else:
+                    (root / "_work-record_").mkdir()
+                    os.symlink(str(external), str(root / "_work-record_" / "recovery"), target_is_directory=True)
+
+                with self.assertRaises(OSError):
+                    preprocessor.make_plan(root)
+
+                self.assertEqual([], list(external.iterdir()))
+
+    def test_plan_refuses_contract_hash_drift_before_scan_or_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make(
+                root / "中文片.Movie.2020",
+                "Movie.2020.1080p.WEB-DL.x264-RLS.mkv",
+            )
+
+            with mock.patch.object(preprocessor, "_contract_hash", return_value="tampered"):
+                with self.assertRaises(ValueError):
+                    preprocessor.make_plan(root)
+
+            self.assertFalse((root / "_work-record_").exists())
 
     def test_standard_sample_dablova_plan_and_apply(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -225,7 +320,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             foreign.write_text("x")
             plan = {
                 "task_root": str(root),
-                "version": "1.3.2",
+                "version": "1.3.3",
                 "bundles": [
                     {
                         "status": "ACTION_REQUIRED",
@@ -458,15 +553,36 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
             script = str(SCRIPT_PATH)
             plan_output = subprocess.run(
-                ["python3", script, "plan", "--task-root", str(root)],
+                [sys.executable, script, "plan", "--task-root", str(root)],
                 check=True,
                 capture_output=True,
                 text=True,
             )
             plan_summary = json.loads(plan_output.stdout)
             plan_path = plan_summary["plan_path"]
+            dry_run_output = subprocess.run(
+                [
+                    sys.executable,
+                    script,
+                    "apply",
+                    "--task-root",
+                    str(root),
+                    "--plan",
+                    plan_path,
+                    "--dry-run",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            dry_run_summary = json.loads(dry_run_output.stdout)
+            dry_run_record = json.loads(Path(dry_run_summary["result_path"]).read_text())
+            self.assertEqual("apply", dry_run_record["mode"])
+            self.assertTrue(dry_run_record["dry_run"])
+            self.assertEqual(plan_summary["plan_hash"], dry_run_record["plan_hash"])
+            self.assertEqual("PASS", dry_run_record["status"])
             apply_output = subprocess.run(
-                ["python3", script, "apply", "--task-root", str(root), "--plan", plan_path],
+                [sys.executable, script, "apply", "--task-root", str(root), "--plan", plan_path],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -477,7 +593,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             self.assertEqual("apply", json.loads(apply_record.read_text())["mode"])
             self.assertEqual(plan_summary["plan_hash"], json.loads(apply_record.read_text())["plan_hash"])
             verify_output = subprocess.run(
-                ["python3", script, "verify", "--task-root", str(root), "--plan", plan_path],
+                [sys.executable, script, "verify", "--task-root", str(root), "--plan", plan_path],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -486,6 +602,120 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             verify_record = Path(verify_summary["result_path"])
             self.assertTrue(verify_record.is_file())
             self.assertEqual("verify", json.loads(verify_record.read_text())["mode"])
+            self.assertTrue(verify_summary["naming_plan_only"])
+            self.assertNotIn("allowed_completion_message", verify_summary)
+
+    def test_cli_apply_and_verify_require_explicit_plan(self):
+        for mode in ("apply", "verify"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                src_dir = root / "中文片.Movie.2020"
+                video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+                process = subprocess.run(
+                    [sys.executable, str(SCRIPT_PATH), mode, "--task-root", str(root)],
+                    capture_output=True,
+                    text=True,
+                )
+                result = json.loads(process.stdout)
+                self.assertNotEqual(0, process.returncode)
+                self.assertEqual("FAIL", result["status"])
+                self.assertIn("plan", result["error_summary"].lower())
+                self.assertTrue(video.exists())
+
+    def test_cli_formal_apply_requires_successful_dry_run_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan_output = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), "plan", "--task-root", str(root)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            plan_path = json.loads(plan_output.stdout)["plan_path"]
+
+            process = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH), "apply", "--task-root", str(root), "--plan", plan_path],
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(process.stdout)
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("FAIL", result["status"])
+            self.assertEqual(0, result["executed_actions"])
+            self.assertIn("dry-run", result["error_summary"].lower())
+            self.assertTrue(video.exists())
+
+    def test_cli_rejects_external_tampered_plan_before_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external_tmp:
+            root = Path(tmp)
+            external = Path(external_tmp)
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            plan_data = json.loads(Path(plan["plan_path"]).read_text(encoding="utf-8"))
+            plan_data["bundles"][0]["actions"][0]["target"] = str(root / "恶意目标")
+            plan_data["plan_hash"] = preprocessor._plan_signature(plan_data["bundles"])
+            outside_plan = external / "plan.json"
+            outside_plan.write_text(json.dumps(plan_data, ensure_ascii=False), encoding="utf-8")
+
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_PATH),
+                    "apply",
+                    "--task-root",
+                    str(root),
+                    "--plan",
+                    str(outside_plan),
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(process.stdout)
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("FAIL", result["status"])
+            self.assertEqual(0, result["executed_actions"])
+            self.assertTrue(video.exists())
+
+    def test_cli_rejects_plan_reached_through_symlinked_recovery_child(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            src_dir = root / "中文片.Movie.2020"
+            video = self._make(src_dir, "Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            plan = self._plan(root)
+            recovery = root / preprocessor.WORK_RECORD_DIR / "recovery"
+            outside_recovery = root / "alternate-recovery"
+            outside_recovery.mkdir()
+            linked_dir = recovery / "linked"
+            os.symlink(str(outside_recovery), str(linked_dir), target_is_directory=True)
+            linked_plan = outside_recovery / "linked-plan.json"
+            plan_data = json.loads(Path(plan["plan_path"]).read_text(encoding="utf-8"))
+            plan_data["plan_path"] = str(linked_plan)
+            linked_plan.write_text(json.dumps(plan_data, ensure_ascii=False), encoding="utf-8")
+            supplied_plan = linked_dir / linked_plan.name
+
+            process = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_PATH),
+                    "apply",
+                    "--task-root",
+                    str(root),
+                    "--plan",
+                    str(supplied_plan),
+                    "--dry-run",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            result = json.loads(process.stdout)
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("FAIL", result["status"])
+            self.assertEqual(0, result["executed_actions"])
+            self.assertTrue(video.exists())
 
     def test_plan_collision_uses_parent_and_casefolded_nfc_name_key(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -518,6 +748,25 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             verify_result = self._verify(plan, root)
             self.assertEqual("FAIL", verify_result["status"])
             self.assertIn("hash", verify_result["error_summary"])
+            self.assertTrue(video.exists())
+
+    def test_plan_integrity_requires_current_naming_contract_hash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = self._make(
+                root / "中文片.Movie.2020",
+                "Movie.2020.1080p.WEB-DL.x264-RLS.mkv",
+            )
+            plan = self._plan(root)
+            plan["naming_contract_sha256"] = "tampered"
+
+            apply_result = self._apply(plan, root, dry_run=True)
+            verify_result = self._verify(plan, root)
+
+            self.assertEqual("FAIL", apply_result["status"])
+            self.assertIn("naming", apply_result["error_summary"].lower())
+            self.assertEqual("FAIL", verify_result["status"])
+            self.assertIn("naming", verify_result["error_summary"].lower())
             self.assertTrue(video.exists())
 
 

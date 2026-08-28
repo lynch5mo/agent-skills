@@ -11,8 +11,8 @@
 ## 新顺序的故障边界
 
 - 初扫若读取 NFO 内容、运行 `ffprobe`/IMDb、计算完整 hash、去重或做深度归类，视为 B02 阶段跳步；应回到轻量文件名清单并重建扫描证据。
-- 先计算 expected 路径和 `source_shape` 再判命名状态：`NAMING_PASS` 只做 exact-path 复扫和 CORE 对账；`ACTION_REQUIRED` 必须有完整 naming bundle；只有 `EXCEPTION` 才进入 `明确/待查/冲突` 与有限查证。
-- `NAMING_PASS` 不得因恢复、父目录改名或其他条目异常而重新深查；未闭合 bundle、目标碰撞和部分执行按相应 B 卡单项隔离。
+- 先计算 expected 路径和 `source_shape` 再判命名状态：`NAMING_PASS` 在命名阶段只做 exact-path 复扫并进入 CORE 对账，CORE 通过后与全部 active 电影一起进入 DEDUPE 候选扫描；`ACTION_REQUIRED` 必须有完整 naming bundle；只有 `EXCEPTION` 才进入 `明确/待查/冲突` 与有限查证。
+- `CORE_GATE` 前，`NAMING_PASS` 不得因恢复、父目录改名或其他条目异常而重新深查；CORE 通过后它必须与全部 active 电影一起参加 DEDUPE 候选扫描。未闭合 bundle、目标碰撞和部分执行按相应 B 卡单项隔离。
 - `CORE_GATE` 未通过不得清理、去重或发完成语义；`DEDUPE_GATE` 未通过不得普通 trash 或终扫。
 - 安全完整移入 `_待确认_` 且有 pending 目标、来源和恢复记录的单元标记为 `accounted_pending`：不计入 active 违规或 `unaccounted_video_units`；`unaccounted_video_units` 只统计既无 active 最终路径、又无完整 pending 记录的单元。系统故障导致单元只能原地冻结时，门禁必须失败。
 
@@ -46,7 +46,7 @@
 - 触发：重启后批次状态不清，或命名复扫/父目录改名中断导致 bundle 部分执行。
 - 禁止：盲目重跑整批。
 - 处理：先复扫；对每条标注 `未执行`/`已执行`/`部分执行`；已执行条目做 `old/new/sidecar/expected/evidence` 校验，要求 old absent + new exists；未完成条目按 B 卡处理。去重中断还要核对四项 DEDUPE 计数。
-- 补充：已 `NAMING_PASS` 项保持早退出，不重新读取 NFO、运行 `ffprobe`/IMDb、计算 hash、去重或深度归类。
+- 补充：`CORE_GATE` 前已 `NAMING_PASS` 项保持早退出，不重新读取 NFO、运行 `ffprobe`/IMDb、计算 hash、去重或深度归类；CORE 后统一进入候选扫描，Agent 再按证据核对 edition/cut/质量。
 - 通过：现场状态与工作单对齐后从未完成条目恢复。
 - 未通过：仅该条冻结/待确认，明确项继续。
 

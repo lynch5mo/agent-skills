@@ -16,13 +16,15 @@ import html
 import json
 import os
 import re
+import stat
 import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
+EXPECTED_NAMING_CONTRACT_SHA256 = "639eece9c338efedabcb4a2c0b951cf00f202f95e1890776e35dd31a53c3d6c0"
 
 VIDEO_EXTENSIONS = {
     ".avi",
@@ -59,6 +61,25 @@ def _inside(root: str | Path, path: str | Path, *, allow_root: bool = True) -> b
     except ValueError:
         return False
     return True
+
+
+def _validate_recovery_tree(task_root: str | Path) -> None:
+    """Reject recovery control paths that could redirect writes outside root."""
+
+    root = _canonical(task_root)
+    work_record = root / WORK_RECORD_DIR
+    if os.path.lexists(work_record):
+        if os.path.islink(work_record):
+            raise OSError(f"recovery control directory is a symlink: {work_record}")
+        if not work_record.is_dir() or not _inside(root, work_record, allow_root=False):
+            raise OSError(f"recovery control directory is not an in-root directory: {work_record}")
+
+    recovery = work_record / "recovery"
+    if os.path.lexists(recovery):
+        if os.path.islink(recovery):
+            raise OSError(f"recovery directory is a symlink: {recovery}")
+        if not recovery.is_dir() or not _inside(root, recovery, allow_root=False):
+            raise OSError(f"recovery directory is not an in-root directory: {recovery}")
 
 
 def _is_cjk(text: str) -> bool:
@@ -208,7 +229,17 @@ def _has_child_directory(parent: Path) -> bool:
     except OSError:
         return True
     with entries as iterator:
-        return any(entry.is_dir(follow_symlinks=False) for entry in iterator)
+        # Reserved control directories are audited separately at the terminal
+        # cleanup gate; they must not turn an otherwise valid movie bundle into
+        # a collection EXCEPTION before that gate can report the violation.
+        return any(
+            entry.is_dir(follow_symlinks=False) and not (
+                entry.name == WORK_RECORD_DIR
+                or entry.name == PENDING_DIR
+                or entry.name.startswith(TRASH_PREFIX)
+            )
+            for entry in iterator
+        )
 
 
 def _collect_sidecars(
@@ -644,10 +675,14 @@ def _destination_key(path: str | Path) -> Tuple[str, str]:
     return str(_canonical(destination.parent)), _name_key(destination.name)
 
 
-def make_plan(task_root: str | Path) -> Dict[str, object]:
+def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, object]:
     root = _canonical(task_root)
     if not root.is_dir():
         raise ValueError("TASK_ROOT does not exist or is not a directory")
+    contract_hash = _contract_hash()
+    if not contract_hash or contract_hash != EXPECTED_NAMING_CONTRACT_SHA256:
+        raise ValueError("naming-contract hash mismatch or missing")
+    _validate_recovery_tree(root)
 
     scanned = _collect_scan(root)
     bundles = [
@@ -690,7 +725,7 @@ def make_plan(task_root: str | Path) -> Dict[str, object]:
         "version": VERSION,
         "task_root": str(root),
         "standard_id": "movie-organizing",
-        "naming_contract_sha256": _contract_hash(),
+        "naming_contract_sha256": contract_hash,
         "scan_id": scan_id,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "summary": summary,
@@ -698,14 +733,18 @@ def make_plan(task_root: str | Path) -> Dict[str, object]:
     }
     report["plan_hash"] = _plan_signature(bundles)
 
-    recovery = root / WORK_RECORD_DIR / "recovery"
-    recovery.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-    report_path = recovery / f"plan-{timestamp}.json"
-    report["plan_path"] = str(report_path)
-    report_path.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    if persist:
+        _validate_recovery_tree(root)
+        recovery = root / WORK_RECORD_DIR / "recovery"
+        recovery.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        report_path = recovery / f"plan-{timestamp}.json"
+        report["plan_path"] = str(report_path)
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    else:
+        report["plan_path"] = ""
     return report
 
 
@@ -786,6 +825,14 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
     plan_root = _canonical(str(plan.get("task_root", "")))
     if plan_root != root:
         return "plan task_root does not exactly match provided TASK_ROOT"
+    if plan.get("schema") != "movie-organizing-preprocessor/v1":
+        return "plan schema mismatch"
+    if plan.get("version") != VERSION:
+        return "plan version mismatch"
+    if plan.get("standard_id") != "movie-organizing":
+        return "plan standard_id mismatch"
+    if plan.get("naming_contract_sha256") != EXPECTED_NAMING_CONTRACT_SHA256:
+        return "plan naming-contract hash mismatch"
     plan_hash = plan.get("plan_hash")
     if not isinstance(plan_hash, str) or not plan_hash:
         return "plan hash missing"
@@ -794,12 +841,107 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
     return None
 
 
+def _plan_argument_error(plan: object, supplied_path: str | Path, root: Path) -> Optional[str]:
+    """Validate the explicit on-disk plan before any apply/verify work."""
+
+    if not isinstance(plan, dict):
+        return "plan JSON must be an object"
+    supplied = Path(os.path.abspath(os.fspath(supplied_path)))
+    if supplied.is_symlink():
+        return "plan file must not be a symlink"
+    try:
+        mode = os.lstat(supplied).st_mode
+    except OSError as error:
+        return f"plan file cannot be inspected: {error}"
+    if not stat.S_ISREG(mode):
+        return "plan file must be a regular file"
+    if not _inside(root, supplied, allow_root=False):
+        return "plan file must be inside TASK_ROOT/_work-record_/recovery"
+    recovery = root / WORK_RECORD_DIR / "recovery"
+    try:
+        # Check the canonical entity, not just the lexical spelling: a
+        # symlinked child directory under recovery must not smuggle a plan
+        # from an alternate in-root location into the execution path.
+        _canonical(supplied).relative_to(_canonical(recovery))
+    except ValueError:
+        return "plan file must be inside TASK_ROOT/_work-record_/recovery"
+    declared_path = plan.get("plan_path")
+    if not isinstance(declared_path, str) or not declared_path:
+        return "plan_path missing"
+    if _canonical(declared_path) != _canonical(supplied):
+        return "plan_path does not match the supplied plan file"
+    if plan.get("schema") != "movie-organizing-preprocessor/v1":
+        return "plan schema mismatch"
+    if plan.get("version") != VERSION:
+        return "plan version mismatch"
+    if plan.get("standard_id") != "movie-organizing":
+        return "plan standard_id mismatch"
+    if plan.get("naming_contract_sha256") != EXPECTED_NAMING_CONTRACT_SHA256:
+        return "plan naming-contract hash mismatch"
+    if not isinstance(plan.get("scan_id"), str) or not plan.get("scan_id"):
+        return "plan scan_id missing"
+    if not isinstance(plan.get("bundles"), list):
+        return "plan bundles missing or invalid"
+    return _plan_integrity_error(plan, root)
+
+
+def _fresh_plan_error(plan: Dict[str, object], root: Path) -> Optional[str]:
+    try:
+        fresh = make_plan(root, persist=False)
+    except (OSError, ValueError) as error:
+        return f"fresh plan failed: {error}"
+    for field in ("task_root", "version", "standard_id", "naming_contract_sha256", "scan_id", "plan_hash"):
+        if field == "task_root":
+            if _canonical(str(plan.get(field, ""))) != _canonical(str(fresh.get(field, ""))):
+                return "plan task_root does not match the fresh TASK_ROOT"
+        elif plan.get(field) != fresh.get(field):
+            return f"plan {field} does not match the fresh TASK_ROOT scan"
+    return None
+
+
+def _matching_recovery_result(
+    root: Path, plan_hash: str, *, mode: str, dry_run: Optional[bool]
+) -> bool:
+    """Find a generated result record without following links or leaving recovery."""
+
+    recovery = root / WORK_RECORD_DIR / "recovery"
+    if not recovery.is_dir() or recovery.is_symlink():
+        return False
+    try:
+        entries = list(os.scandir(recovery))
+    except OSError:
+        return False
+    for entry in entries:
+        path = Path(entry.path)
+        if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+            continue
+        if path.suffix.casefold() != ".json":
+            continue
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        if record.get("schema") != "movie-organizing-preprocessor/result/v1":
+            continue
+        if record.get("mode") != mode or record.get("status") != "PASS":
+            continue
+        if record.get("task_root") != str(root) or record.get("plan_hash") != plan_hash:
+            continue
+        if dry_run is not None and record.get("dry_run") is not dry_run:
+            continue
+        return True
+    return False
+
+
 def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
     root_path = _canonical(root)
     integrity_error = _plan_integrity_error(plan, root_path)
     if integrity_error:
         return {
             "status": "FAIL",
+            "naming_plan_only": True,
             "missing": [integrity_error],
             "error_summary": integrity_error,
         }
@@ -809,6 +951,7 @@ def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
             missing.extend(_verify_bundle(bundle, root_path))
     return {
         "status": "PASS" if not missing else "FAIL",
+        "naming_plan_only": True,
         "missing": missing,
         "error_summary": "; ".join(missing),
     }
@@ -875,6 +1018,7 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
 
 
 def _write_result(root: Path, mode: str, plan: Dict[str, object], result: Dict[str, object]) -> Path:
+    _validate_recovery_tree(root)
     recovery = root / WORK_RECORD_DIR / "recovery"
     recovery.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
@@ -922,24 +1066,108 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     task_root = _canonical(args.task_root)
 
     if args.mode == "plan":
-        report = make_plan(task_root)
+        try:
+            report = make_plan(task_root)
+        except (OSError, ValueError) as error:
+            result = {
+                "status": "FAIL",
+                "version": VERSION,
+                "error_summary": f"plan write failed: {error}",
+            }
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 1
         print(json.dumps(_cli_summary(report), ensure_ascii=False, indent=2))
         return 0
 
-    if args.plan:
+    if not args.plan:
+        result = {
+            "status": "FAIL",
+            "version": VERSION,
+            "mode": args.mode,
+            "executed_actions": 0,
+            "error_summary": "--plan is required for apply/verify; refusing to generate one implicitly",
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
+        _validate_recovery_tree(task_root)
+    except OSError as error:
+        result = {
+            "status": "FAIL",
+            "version": VERSION,
+            "mode": args.mode,
+            "executed_actions": 0,
+            "error_summary": f"recovery write blocked: {error}",
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    try:
         plan = json.loads(Path(args.plan).read_text(encoding="utf-8"))
-    else:
-        plan = make_plan(task_root)
+    except (OSError, ValueError) as error:
+        result = {
+            "status": "FAIL",
+            "version": VERSION,
+            "mode": args.mode,
+            "executed_actions": 0,
+            "error_summary": f"plan read failed: {error}",
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
+
+    plan_error = _plan_argument_error(plan, args.plan, task_root)
+    if plan_error:
+        result = {
+            "status": "FAIL",
+            "version": VERSION,
+            "mode": args.mode,
+            "executed_actions": 0,
+            "error_summary": f"plan rejected: {plan_error}",
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 1
 
     if args.mode == "apply":
-        result = apply_plan(plan, task_root, dry_run=args.dry_run)
+        freshness_error = _fresh_plan_error(plan, task_root)
+        if freshness_error:
+            result = {
+                "status": "FAIL",
+                "executed_actions": 0,
+                "error_summary": freshness_error,
+            }
+        elif not args.dry_run and not _matching_recovery_result(
+            task_root, str(plan.get("plan_hash", "")), mode="apply", dry_run=True
+        ):
+            result = {
+                "status": "FAIL",
+                "executed_actions": 0,
+                "error_summary": "successful dry-run recovery evidence is required before formal apply",
+            }
+        else:
+            result = apply_plan(plan, task_root, dry_run=args.dry_run)
+            result["dry_run"] = bool(args.dry_run)
     else:
-        result = verify_plan(plan, task_root)
+        if not _matching_recovery_result(
+            task_root, str(plan.get("plan_hash", "")), mode="apply", dry_run=False
+        ):
+            result = {
+                "status": "FAIL",
+                "naming_plan_only": True,
+                "executed_actions": 0,
+                "error_summary": "successful formal apply recovery evidence is required before verify",
+            }
+        else:
+            result = verify_plan(plan, task_root)
     result["mode"] = args.mode
     try:
         result_path = _write_result(task_root, args.mode, plan, result)
         result["result_path"] = str(result_path)
     except OSError as error:
+        result["status"] = "FAIL"
+        previous_summary = str(result.get("error_summary", "")).strip()
+        write_summary = f"result write failed: {error}"
+        result["error_summary"] = f"{previous_summary}; {write_summary}" if previous_summary else write_summary
         result["result_write_error"] = str(error)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "PASS" else 1

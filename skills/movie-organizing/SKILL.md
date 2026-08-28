@@ -6,13 +6,38 @@ description: >-
   within an explicitly bounded TASK_ROOT.
 license: MIT
 metadata:
-  version: "1.3.2"
+  version: "1.3.3"
   author: lynch5mo
   tags: [media, movie-library, batch-plan]
   trigger: User asks to normalize, rehome, deduplicate, or quality-select a mixed movie library in batches.
 ---
 
 # Movie Organizing
+
+## v1.3.3 入口完整性与固定命令顺序（硬门禁）
+
+每个任务开始时，必须先验证已安装 Skill 的关键文件完整性；验证失败不得处理媒体。命令顺序固定为：
+
+```bash
+SKILL_DIR="/path/to/movie-organizing"
+python3 "$SKILL_DIR/scripts/movie_organizing_audit.py" verify-install --skill-dir "$SKILL_DIR"
+# 仅当上一步返回 PASS 后，才锁定 TASK_ROOT 并运行以下命令
+SCRIPT="$SKILL_DIR/scripts/movie_organizing_preprocessor.py"
+python3 "$SCRIPT" plan --task-root "$TASK_ROOT"
+python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --dry-run --plan <recovery/plan-*.json>
+python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
+python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
+python3 "$SKILL_DIR/scripts/movie_organizing_audit.py" audit --task-root "$TASK_ROOT"
+```
+
+`verify-install` 使用 Skill 自带的标准库 checksum/size manifest，并拒绝 `[OUTPUT TRUNCATED` 等截断标记；它不读取或修改媒体。`preprocessor verify` 的 PASS 只代表命名计划执行验证（结果含 `naming_plan_only=true`），不代表任务完成。最终工作单和完成结论只能引用最后一次 `audit` 写入的 recovery JSON；不得手写或覆盖门禁计数。
+
+`apply` 与 `verify` 必须显式传入该次 `plan` 输出的 `--plan`；计划文件必须是当前 `TASK_ROOT/_work-record_/recovery/` 下的 canonical、regular、非 symlink JSON，且 schema/version/standard_id/naming_contract_sha256/scan_id/plan_path 与当前生成合同一致。正式 apply（不带 `--dry-run`）只有在同一 TASK_ROOT、同一 plan_hash 的成功 dry-run recovery 证据已落盘时才可执行，否则零 mutation 失败；verify 只接受同一计划的成功正式 apply 证据，不能自行补生成计划或把局部 PASS 当成完成。
+
+`audit` 先验证 TASK_ROOT 内 recovery/control 路径没有 symlink 或越界实体，再做 fresh active tree 的 `CORE_GATE`；随后仅在 CORE PASS 后让**所有 active 电影单元（包括 `NAMING_PASS`）**参加跨目录重复候选扫描，最后执行浅层 cleanup 终扫。pending/trash/work-record 均排除，非空 pending 即保留待确认计数。它只输出候选和证据，不按名称或大小自动删除。
+
+活动树没有任何主视频（`active_video_units=0`，包括只有空壳、pending 或 root trash 的根）时 CORE 必须失败并保持 BLOCKED。`_work-record_`、`_待确认_`、`_trash_*` 仅允许出现在 TASK_ROOT 根层；导演夹或电影夹中的同名条目属于 cleanup 违规，不能藏视频绕过终扫。
+审计 JSON 固定包含 `core_gate`、`dedupe_gate`、`cleanup_gate`、`counts`、`candidate_groups`、`pending_count`、`completion_status`、`allowed_completion_message` 和 `report_path`；CORE 失败时 `dedupe_gate.status=NOT_RUN` 且命令返回非零。`completion_status` 只允许 `BLOCKED`、`CORE_COMPLETE_PENDING`、`COMPLETE`，后两态返回零；候选/异常/终扫清单最多各处理 10–20 项一批。
 
 ## 最高优先核心职责（CORE）
 
@@ -65,6 +90,7 @@ metadata:
 ### 0. 任务根与恢复
 
 - 锁定用户给出的 `TASK_ROOT`，核对 canonical 实体、挂载/FUSE、权限和路径可达性。
+- `TASK_ROOT` 必须是活动直接子目录为导演夹的库段（用户通常给国家目录）；若给到仍包含洲/国家层的父目录，root 浅层终扫会阻塞，必须按各直接子范围分别运行，不得自行递归猜导演层。
 - 读取唯一工作单并现场复扫未闭合批次；无工作单时建立一份。禁止用对话记忆续跑。
 - 系统性挂载、权限或证据不可写按 B05/B11 停止；单项异常按对应 B 卡隔离。
 
@@ -93,6 +119,7 @@ metadata:
 SKILL_DIR="/path/to/movie-organizing"
 SCRIPT="$SKILL_DIR/scripts/movie_organizing_preprocessor.py"
 python3 "$SCRIPT" plan --task-root "$TASK_ROOT"
+python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --dry-run --plan <recovery/plan-*.json>
 python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 ```
@@ -126,7 +153,7 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 这些字段必须在分类前生成，且基于命名合同、已闭环的身份/导演/年份/release 事实；缺失 NFO/字幕要明确记录缺失，不能用占位动作代替，字段缺失不得进入计划。
 
-- `NAMING_PASS`：仅当所有存在的导演夹、电影夹、视频、NFO、字幕的**实际路径逐字等于对应 expected 路径**，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无目标碰撞；无动作，立即退出深查，只进入 `CORE_GATE` 对账。不得凭“看起来规范”自报。
+- `NAMING_PASS`：仅当所有存在的导演夹、电影夹、视频、NFO、字幕的**实际路径逐字等于对应 expected 路径**，缺失 sidecar 已显式记录、`source_shape=standard`、结构正确且无目标碰撞；无动作。它只表示命名阶段合格：在 `CORE_GATE` 之前不读取 NFO/运行 `ffprobe`/查 IMDb/算 hash，也不做去重；通过 CORE 后必须与其他 active 电影一起进入 `DEDUPE_GATE` 候选扫描。不得凭“看起来规范”自报。
 - `ACTION_REQUIRED`：目标唯一但需要合同规定的语法规范化，或 `source_shape` 为 `orphan`、`dispersed`、`collection`，或缺失标准目录；必须按计划创建目录、改名并 rehome，不能当作无动作通过。纯语法动作仍须生成完整 bundle，不改变电影身份、导演、年份事实或 release token。
 - `EXCEPTION`：身份、导演、年份、归属或主视频不明，特殊容器/结构，多版本或重复关系，Unicode/实体边界，sidecar 配对不明，或任何目标碰撞/不可逆风险。不得临时加后缀、覆盖或猜名。
 
@@ -142,7 +169,7 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 计划验核通过后，按形态执行该批明确 bundle：**必要目标目录（计划内 mkdir）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 导演夹定位/改名 → 现场复扫**。对已有容器仍坚持子项先、父目录后；每个子项现场复扫导演夹、电影夹、视频、NFO、字幕、残留/碰撞、bytes、sidecar 和工作单。每个执行项必须证明 old path 已消失、new path 已存在且逐字等于 expected path；子项复扫 PASS 后才允许改父目录。此序列不执行普通 trash。
 
-`NAMING_PASS` 项永远不回到深查：禁止继续读 NFO 内容、运行 `ffprobe`、查 IMDb、计算 hash、去重或深度归类；它只在最终终扫中计数。复扫失败按 B13/B04 处理，不以返回码代替现场验收。
+`NAMING_PASS` 项在 `CORE_GATE` 前不回到深查：禁止提前读 NFO 内容、运行 `ffprobe`、查 IMDb、计算 hash、去重或深度归类；它在 CORE 后与全部 active 电影一并接受候选扫描和 Agent 的版本/质量查证。复扫失败按 B13/B04 处理，不以返回码代替现场验收。
 
 ### 6. 仅 EXCEPTION 进入慢通道
 
@@ -175,6 +202,8 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 `DEDUPE_GATE=PASS` 后，才执行命名合同已明确的普通垃圾 trash（以及允许直接删除的 `.DS_Store`、`._*`），使用预锁 `trash_target`、固定 trash 根和可逆证据；这一步不能反向修改核心路径。
 
+`audit` 的 `cleanup_gate` 是最小终扫：仅在 CORE/DEDUPE 均 PASS 后浅扫 active TASK_ROOT、导演夹和 `NAMING_PASS` 电影夹；root 只允许计划中的导演夹，导演夹只允许计划中的电影夹，电影夹白名单只包括 expected 主视频、expected NFO 和 expected 字幕。缺失、非普通文件、symlink、海报、`.DS_Store`、`._*`、未知/空壳目录或其他条目均计入 `active_non_whitelist_items` 并使 cleanup FAIL；每个 expected 文件都要重新核验存在、regular、非 symlink 且 canonical 在 TASK_ROOT 内。CORE 或 DEDUPE 未通过时 cleanup 为 `NOT_RUN`。cleanup FAIL 时不得使用“终扫 PASS”完成语义，且脚本不自动删除任何条目。
+
 全量复扫仍排除 `_work-record_`、`_待确认_`、全部 `_trash_*` 媒体内容，但最终统计必须包含三类控制目录。若 active CORE、active DEDUPE、普通清理和终扫均 PASS 但待确认>0，只能输出 `主目录四项核心整理已完成，待确认 N项`；仅当待确认=0、`CORE_GATE=PASS`、`DEDUPE_GATE=PASS`、上述普通清理完成、终扫 PASS 且无残留 required/partial/unaccounted 计数时，才可输出 `全部整理完成（待确认=0且终扫PASS）`。
 
 ## 执行顺序（硬规则）
@@ -185,7 +214,7 @@ python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>
 
 ## 中断、分类与回收
 
-- 中断恢复先现场复扫并按 B04 对齐 `未执行/已执行/部分执行`；已 `NAMING_PASS` 项不重新深查，未闭合 bundle 或部分执行项只从未完成动作恢复。
+- 中断恢复先现场复扫并按 B04 对齐 `未执行/已执行/部分执行`；`CORE_GATE` 前已 `NAMING_PASS` 项不重新深查，CORE 后仍须参加统一 DEDUPE 候选扫描；未闭合 bundle 或部分执行项只从未完成动作恢复。
 - `明确` 是身份/sidecar/目标已闭环；`待查` 是仍可低成本核验；`冲突` 是多候选、归属/版本/边界或不可逆风险。`待确认` 只接收最小完整单元并保留恢复路径。
 - 普通任务不重新扫描 `_待确认_`；只有用户明确要求处理该目录时才重开范围。所有异常先按 `failure-handling.md` 的 B 码，不以工具报错替代媒体冲突。
 

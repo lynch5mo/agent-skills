@@ -12,7 +12,7 @@
 
 - 初扫只收路径、目录层级、文件名/类型、视频/NFO/字幕存在性、结构异常和目标碰撞所需信息。
 - 初扫禁止读 NFO 内容、跑 `ffprobe`、查 IMDb、算完整 hash、去重或深度归类；文件系统可枚举所有条目，但推理按同类模式和 10–20 项批次进行。
-- `NAMING_PASS` 只进入最终对账，不再读 NFO、跑 `ffprobe`/IMDb、算 hash、去重或深查。
+- `NAMING_PASS` 只在 `CORE_GATE` 前进入命名对账，不读 NFO、跑 `ffprobe`/IMDb、算 hash、去重或深查；CORE 通过后必须与所有 active 电影一起进入跨目录 DEDUPE 候选扫描。
 - `ACTION_REQUIRED` 覆盖唯一可判定的语法改名，以及需要建夹/rehome 的 `orphan`、`dispersed`、`collection` 单元；不得无动作通过；语义事实变化或不确定即为 `EXCEPTION`，进入慢通道。
 - 目标碰撞必须进入 `EXCEPTION`；不得临时加后缀、覆盖或改写锁定计划。
 
