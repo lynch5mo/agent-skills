@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 WORK_RECORD_DIR = "_work-record_"
 RECOVERY_DIR = "recovery"
 PENDING_DIR = "_待确认_"
@@ -59,6 +59,8 @@ REQUIRED_INTEGRITY_PATHS = (
     "references/triage-and-edge-cases.md",
     "scripts/movie_organizing_audit.py",
     "scripts/movie_organizing_preprocessor.py",
+    "scripts/movie_organizing_slowpath.py",
+    "scripts/movie_organizing_task.py",
 )
 
 COMPLETION_BLOCKED = "BLOCKED"
@@ -261,6 +263,31 @@ def _pending_metrics(root: Path, video_extensions: Iterable[str]) -> Tuple[int, 
 
 def _pending_count(root: Path, video_extensions: Iterable[str]) -> int:
     return _pending_metrics(root, video_extensions)[0]
+
+
+def _pending_video_count(root: Path, video_extensions: Iterable[str]) -> int:
+    """Count real video files recursively below ``_待确认_`` (read-only)."""
+
+    pending = root / PENDING_DIR
+    if pending.is_symlink() or not pending.is_dir():
+        return 0
+    extensions = {str(ext).casefold() for ext in video_extensions}
+    count = 0
+    stack = [pending]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    if entry.is_symlink():
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    elif entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.casefold() in extensions:
+                        count += 1
+        except OSError:
+            continue
+    return count
 
 
 def _limit(items: Iterable[Dict[str, Any]], limit: int = 20) -> List[Dict[str, Any]]:
@@ -681,6 +708,7 @@ def _base_report(root: Path) -> Dict[str, Any]:
             "terminal_scan": "NOT_RUN",
         },
         "pending_count": 0,
+        "pending_video_count": 0,
         "pending_nonvideo_or_empty_units": 0,
         "control_violations": [],
         "control_violation_count": 0,
@@ -689,6 +717,7 @@ def _base_report(root: Path) -> Dict[str, Any]:
             "dedupe": {},
             "cleanup": {},
             "pending_count": 0,
+            "pending_video_count": 0,
             "pending_nonvideo_or_empty_units": 0,
             "control_violation_count": 0,
         },
@@ -709,6 +738,7 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
             "dedupe": report["dedupe_gate"]["counts"],
             "cleanup": report["cleanup_gate"]["counts"],
             "pending_count": 0,
+            "pending_video_count": 0,
             "pending_nonvideo_or_empty_units": 0,
             "control_violation_count": 0,
         }
@@ -745,12 +775,13 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
             "director_violations": director_violations[:20],
             "control_violations": [],
         }
-        if counts.get("active_video_units", 0) == 0:
-            report["core_gate"]["reason"] = "TASK_ROOT has no active video units"
         preprocessor_video_extensions = getattr(preprocessor, "VIDEO_EXTENSIONS", set())
         report["pending_count"], report["pending_nonvideo_or_empty_units"] = _pending_metrics(
             root, preprocessor_video_extensions
         )
+        report["pending_video_count"] = _pending_video_count(root, preprocessor_video_extensions)
+        if counts.get("active_video_units", 0) == 0:
+            report["core_gate"]["reason"] = "TASK_ROOT has no active video units"
 
         if report["core_gate"]["status"] == "PASS":
             groups = _candidate_groups(root, plan)
@@ -823,6 +854,7 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
         "dedupe": report["dedupe_gate"].get("counts", {}),
         "cleanup": report["cleanup_gate"].get("counts", {}),
         "pending_count": report["pending_count"],
+        "pending_video_count": report.get("pending_video_count", 0),
         "pending_nonvideo_or_empty_units": report.get("pending_nonvideo_or_empty_units", 0),
         "control_violation_count": report.get("control_violation_count", 0),
     }
@@ -923,11 +955,13 @@ def verify_install(skill_dir: str | Path) -> Dict[str, Any]:
         if required not in seen:
             _manifest_failure(failures, f"required file missing from integrity manifest: {required}")
 
-    # Check version declarations in the two public scripts and the skill entry.
+    # Check version declarations in every public entrypoint and the skill entry.
     declaration_checks = (
         ("SKILL.md", r"metadata:\s*\n\s*version:\s*[\"']([^\"']+)[\"']"),
         ("scripts/movie_organizing_preprocessor.py", r"^VERSION\s*=\s*[\"']([^\"']+)[\"']"),
         ("scripts/movie_organizing_audit.py", r"^VERSION\s*=\s*[\"']([^\"']+)[\"']"),
+        ("scripts/movie_organizing_slowpath.py", r"^VERSION\s*=\s*[\"']([^\"']+)[\"']"),
+        ("scripts/movie_organizing_task.py", r"^VERSION\s*=\s*[\"']([^\"']+)[\"']"),
     )
     for relative, pattern in declaration_checks:
         target = root / relative

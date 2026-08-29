@@ -280,20 +280,30 @@ class MovieOrganizingAuditTest(unittest.TestCase):
 
     def test_skill_command_chain_includes_dry_run_before_apply(self):
         skill_text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-        commands = [
-            'python3 "$SCRIPT" plan --task-root "$TASK_ROOT"',
-            'python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --dry-run --plan <recovery/plan-*.json>',
-            'python3 "$SCRIPT" apply --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>',
-            'python3 "$SCRIPT" verify --task-root "$TASK_ROOT" --plan <recovery/plan-*.json>',
-            'python3 "$SKILL_DIR/scripts/movie_organizing_audit.py" audit --task-root "$TASK_ROOT"',
+        # Assert the documented phase order without coupling the contract to a
+        # placeholder glob.  The CLI emits a concrete recovery plan path and
+        # the task entrypoint is the authoritative workflow gate.
+        patterns = [
+            r'python3 "\$SCRIPT" plan --task-root "\$TASK_ROOT"',
+            r'python3 "\$SCRIPT" apply --task-root "\$TASK_ROOT" --dry-run --plan [^\n]+',
+            r'python3 "\$SCRIPT" apply --task-root "\$TASK_ROOT" --plan [^\n]+',
+            r'python3 "\$SCRIPT" verify --task-root "\$TASK_ROOT" --plan [^\n]+',
+            r'python3 "\$SKILL_DIR/scripts/movie_organizing_audit\.py" audit --task-root "\$TASK_ROOT"',
         ]
-        positions = [skill_text.index(command) for command in commands]
+        import re
+
+        positions = []
+        for pattern in patterns:
+            match = re.search(pattern, skill_text)
+            self.assertIsNotNone(match, pattern)
+            positions.append(match.start())
+        self.assertNotIn("plan-*", skill_text)
         self.assertEqual(sorted(positions), positions)
 
     def test_cleanup_gate_scans_root_and_director_shallow_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            movie = self._add_standard_movie(
+            self._add_standard_movie(
                 root,
                 "导演 Director",
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
@@ -502,10 +512,25 @@ class MovieOrganizingAuditTest(unittest.TestCase):
 
             self.assertNotEqual(0, process.returncode)
             self.assertEqual(1, report["pending_count"])
+            self.assertEqual(1, report["pending_video_count"])
             self.assertEqual("BLOCKED", report["completion_status"])
             self.assertEqual("FAIL", report["core_gate"]["status"])
             self.assertEqual("NOT_RUN", report["cleanup_gate"]["status"])
             self.assertEqual(0, report["core_gate"]["counts"]["active_video_units"])
+
+    def test_dirty_whole_pending_remains_blocked_with_real_video_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pending_unit = root / "_待确认_" / "脏容器"
+            self._make(pending_unit, "Dirty.Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            self._make(pending_unit, "notes.txt", b"keep for review")
+
+            process, report = self._audit(root)
+
+            self.assertNotEqual(0, process.returncode)
+            self.assertEqual("BLOCKED", report["completion_status"])
+            self.assertEqual("FAIL", report["core_gate"]["status"])
+            self.assertEqual(1, report["pending_video_count"])
 
     def test_v134_audit_requires_middle_dot_for_foreign_chinese_director_name(self):
         with tempfile.TemporaryDirectory() as tmp:

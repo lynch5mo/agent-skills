@@ -74,9 +74,9 @@
 
 ## B07 主视频 / 身份误判
 
-- 触发：按扩展名、时长、或主观优先级判断主视频，或把语义不确定项、孤立/分散/合集结构错误放入 `NAMING_PASS`/`ACTION_REQUIRED`。
+- 触发：按扩展名、时长、或主观优先级判断主视频，或把语义不确定项、多视频合集/特殊容器、孤立/分散结构错误放入 `NAMING_PASS`/`ACTION_REQUIRED`。
 - 禁止：猜测改名/移动。
-- 处理：仅在 EXCEPTION 慢通道以 naming-contract、`NFO`、同夹 sidecar、文件字节与目录结构做闭环；纯语法 `ACTION_REQUIRED` 不改变现有身份事实。
+- 处理：确定的单片孤立/分散 leaf 可走命名 bundle；多视频合集/特殊容器和归属不明只在 EXCEPTION slowpath 以 naming-contract、`NFO`、同夹 sidecar、文件字节与目录结构逐片闭环；普通且非 `TASK_ROOT`/非导演 anchor 的异常 source 含 unknown/child/multi-video 时，pending 隔离必须整体移动该 source 容器，不能抽视频留残骸；`TASK_ROOT`/导演 anchor 只可隔离明确 main video + 唯一 sidecar，不能扩大整个导演或整批媒体；纯语法 `ACTION_REQUIRED` 不改变现有身份事实。
 - 通过：主视频与 sidecar/身份映射闭环。
 - 未通过：进入待确认或冻结；旧导演夹/影片单元仍在 active tree 时 CORE_GATE 失败；同任务其余明确项继续。
 
@@ -125,9 +125,9 @@
 
 ## B13 假完成
 
-- 触发：工作单/Agent 声称完成但任一 expected 路径不精确、旧名/非规范 NFO/字幕仍在、孤立视频/合集容器/错误导演归属仍在 active tree，或任一 CORE/DEDUPE 计数（含 `active_nonconforming_nfo_files`、`active_nonconforming_subtitle_files`、`unresolved_duplicate_groups_in_active_tree`）非零；也包括“扫描完成”“计划生成”“命令零退出”被当作动作完成，或原地冻结被当作待确认归零。
+- 触发：工作单/Agent 声称完成但任一 expected 路径不精确、旧名/非规范 NFO/字幕仍在、孤立视频/合集容器/错误导演归属仍在 active tree，或任一 CORE/DEDUPE 计数（含 `active_nonconforming_nfo_files`、`active_nonconforming_subtitle_files`、`unresolved_duplicate_groups_in_active_tree`）非零；也包括“扫描完成”“计划生成”“命令零退出”被当作动作完成、原地冻结被当作待确认归零，或 active 影片为 0 且只剩待确认视频却声称核心完成。
 - 不可合理化：扫描完成 ≠ 改名完成；计划生成 ≠ 动作执行；命令零退出 ≠ 现场 PASS；旧名仍在 ≠ 完成；原地冻结 ≠ 待确认归零。
-- 禁止：用返回码、工作单状态或“看起来规范”替代现场核验；不得在 CORE_GATE/DEDUPE_GATE 未通过时发完成语义。
+- 禁止：用返回码、工作单状态或“看起来规范”替代现场核验；不得在 CORE_GATE/DEDUPE_GATE 未通过时发完成语义。active 影片为 0 且只剩待确认视频时保持 `STOP_PENDING_CONFIRMATION`、`next_allowed=null`，只能报告“无可继续自动处理，待确认 N 项”。
 - 处理：回到 B04；恢复未执行项，逐条核验 `old/new/sidecar/expected`，重算 CORE/DEDUPE 计数，更新工作单与批次状态。多层 wrapper 只有在全部可确定 leaf 已移出、递归无文件/媒体/symlink、只剩空目录骨架时，才可按计划一次性可逆改名到 `_work-record_/flattened-empty/`；wrapper 残留未知内容或异常单元时零 mutation，不能以“拍平完成”自报。
 - 通过：现场扫描、expected 路径、计划、工作单及全部门禁计数完全一致。
 - 未通过：该条回到待确认或冻结；冻结项仍在 active tree 时门禁保持失败，其它明确条目继续。

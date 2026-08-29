@@ -74,7 +74,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             video = self._make(movie_dir, "Original Movie.1949.1080p.BluRay.x264-RLS.mkv")
 
             plan = self._plan(root)
-            self.assertEqual("1.3.4", plan["version"])
+            self.assertEqual("1.3.5", plan["version"])
             self.assertEqual(1, len(plan.get("director_actions", [])))
             director_action = plan["director_actions"][0]
             self.assertEqual(str(old_director.resolve()), director_action["source"])
@@ -357,7 +357,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             movie_dir = root / "导演 Director" / "标准片.Standard Movie.2020"
-            video = self._make(movie_dir, "Standard Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
+            self._make(movie_dir, "Standard Movie.2020.1080p.WEB-DL.x264-RLS.mkv")
             plan = self._plan(root)
             self.assertEqual([], plan["wrapper_actions"])
             self.assertEqual("PASS", self._apply(plan, root)["status"])
@@ -535,7 +535,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             root = Path(tmp)
             src_dir = root / "影迷.The.Dot.Movie.2019"
             video = self._make(src_dir, "The.Dot.Movie.2019.1080p.BluRay.x264-GRP.mkv")
-            sub = self._make(src_dir, "The.Dot.Movie.2019.1080p.BluRay.x264-GRP.chs.srt")
+            self._make(src_dir, "The.Dot.Movie.2019.1080p.BluRay.x264-GRP.chs.srt")
 
             plan = self._plan(root)
             bundle = self._find_bundle(plan, video.stem)
@@ -720,7 +720,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             src_dir = root / "影迷.The.Dot.Movie.2019"
-            video = self._make(src_dir, "The.Dot.Movie.2019.1080p.BluRay.x264-GRP.mkv")
+            self._make(src_dir, "The.Dot.Movie.2019.1080p.BluRay.x264-GRP.mkv")
             plan = self._plan(root)
             self._apply(plan, root)
             rerun = self._plan(root)

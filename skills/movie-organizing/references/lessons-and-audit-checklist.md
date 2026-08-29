@@ -4,14 +4,14 @@
 
 实操风险点只提供候选识别与证据，必须服从命名合同、CORE/DEDUPE 门禁和可逆安全边界。
 
-## v1.3.4 核心门禁风险总表（每批执行前后核对）
+## v1.3.5 核心门禁风险总表（每批执行前后核对）
 
 1. `TASK_ROOT` 已锁定且无越界路径（含 symlink 解析）；只有一份工作单，恢复先现场复扫。
 2. 初扫仅有路径、层级、文件名/类型、视频/NFO/字幕存在性、结构异常和碰撞信息；没有读 NFO 内容、跑 `ffprobe`/IMDb、完整 hash、去重或深度归类。
 3. `naming-contract` 已全文读取并锁合同 hash/`standard_id`；不能以摘要或旧任务替代。
 4. 每个视频单元先记录 `source_director_dir`、`expected_director_dir`、`expected_movie_dir`、`expected_video_path`、NFO/字幕 expected 路径和 `source_shape`，再判唯一三态 `NAMING_PASS`、`ACTION_REQUIRED` 或 `EXCEPTION`。
 5. `NAMING_PASS` 只有实际路径逐字等于全部 expected 路径、`source_shape=standard` 且结构无异常；它仅表示命名阶段合格，CORE 前不深查，CORE 后必须参加统一 DEDUPE 候选扫描；不得凭“看起来规范”自报。
-6. `ACTION_REQUIRED` 有完整 bundle（导演夹、电影夹、视频、现有 NFO 或明确缺失记录、每个字幕、mkdir/rehome、预锁 trash 映射、证据、回滚）；孤立/分散/合集须逐片建夹并 rehome。任意 wrapper 深度的可确定 leaf 均须拍平；wrapper 全部移空后才可一次性可逆归档到 `_work-record_/flattened-empty/`，未知文件、symlink 或异常单元不得部分移动。
+6. `ACTION_REQUIRED` 有完整 bundle（导演夹、电影夹、视频、现有 NFO 或明确缺失记录、每个字幕、mkdir/rehome、预锁 trash 映射、证据、回滚）；确定的单片孤立/分散 leaf 才可快通道建夹并 rehome。多视频合集、特殊容器或归属不明必须是 `EXCEPTION`，交 slowpath 逐片判断。任意 wrapper 深度的可确定 leaf 均须拍平；wrapper 全部移空后才可一次性可逆归档到 `_work-record_/flattened-empty/`，未知文件、symlink 或异常单元不得部分移动。
 7. 批次限制 10–20 个视频单元；计划具备 `scan_id/standard_id/plan_hash`；公共动作字段为 `id/action/target/evidence/rollback/preconditions/postconditions`，仅 rename/rehome/trash 另需 `source`，mkdir 不带伪 source；canonical/old exists/new absent 或 mkdir 目标不存在，复扫为 old absent + new exists + expected exact；无 `old==new`、重复目标或 sentinel。
 8. 目标碰撞、语义变化、特殊结构或配对不明均进入 `EXCEPTION`；无法闭环的最小完整电影单元入 `_待确认_`，原地冻结使 CORE_GATE 失败。
 9. `CORE_GATE` 前禁止普通清理/去重；CORE 通过后所有 active 电影（含 `NAMING_PASS`）先按身份及同一 edition/cut 去重。完整 hash+清单只用于精确重复；质量按 `4K > 1080p > 720p`，同分辨率须有码率/画质证据，不得凭文件名/大小。

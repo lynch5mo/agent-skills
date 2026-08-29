@@ -20,11 +20,12 @@ import stat
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.4"
+VERSION = "1.3.5"
 EXPECTED_NAMING_CONTRACT_SHA256 = "c4a50e6cf92c230da3ad5e19092d80167b5379b6fd34eb919f8db7a6cf5c3a12"
+MAX_SELECTED_ACTION_UNITS = 20
 
 VIDEO_EXTENSIONS = {
     ".avi",
@@ -863,6 +864,16 @@ def _plan_wrapper_actions(root: Path, bundles: Sequence[Dict[str, object]]) -> L
             for item in group:
                 _mark_exception(item, "wrapper contains an unresolved movie unit; flatten is all-or-nothing")
             continue
+        # A wrapper cannot be archived while one of its ACTION_REQUIRED
+        # children has been deferred to a later <=20-unit batch.  Moving the
+        # selected children is safe, but the wrapper must remain in place until
+        # every child has been handled.
+        if any(
+            item.get("status") == "ACTION_REQUIRED"
+            and item.get("selected_for_apply") is not True
+            for item in group
+        ):
+            continue
         accounted, reason = _wrapper_files_are_accounted(wrapper, group)
         if not accounted:
             for item in group:
@@ -923,7 +934,14 @@ def _plan_director_actions(root: Path, bundles: Sequence[Dict[str, object]]) -> 
         if not expected_value:
             continue
         expected = _canonical(str(expected_value))
-        if source == expected or any(item.get("status") == "EXCEPTION" for item in group):
+        if source == expected or any(
+            item.get("status") == "EXCEPTION"
+            or (
+                item.get("status") == "ACTION_REQUIRED"
+                and item.get("selected_for_apply") is not True
+            )
+            for item in group
+        ):
             continue
         if not source.is_dir() or expected.exists() or _conflicting_name(expected.parent, expected.name, ignore=source):
             for item in group:
@@ -977,6 +995,19 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
     # A director target collision is a batch-level conflict: no child of that
     # director may mutate while the parent cannot be renamed safely.
     _mark_director_target_collisions(root, bundles)
+    # Keep the complete inventory in the plan, but select at most one bounded
+    # batch of ACTION_REQUIRED units for this apply.  Deferred units remain
+    # ACTION_REQUIRED (never a false NAMING_PASS) and are selected by the next
+    # fresh plan after this batch is verified.
+    action_units = [
+        item
+        for item in bundles
+        if item.get("status") == "ACTION_REQUIRED"
+    ]
+    for item in bundles:
+        item["selected_for_apply"] = False
+    for item in action_units[:MAX_SELECTED_ACTION_UNITS]:
+        item["selected_for_apply"] = True
     wrapper_actions = _plan_wrapper_actions(root, bundles)
     director_actions = _plan_director_actions(root, bundles)
     summary = {
@@ -984,8 +1015,23 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         "naming_pass": sum(item["status"] == "NAMING_PASS" for item in bundles),
         "action_required": sum(item["status"] == "ACTION_REQUIRED" for item in bundles),
         "exception": sum(item["status"] == "EXCEPTION" for item in bundles),
+        "selected_action_units": sum(
+            item.get("status") == "ACTION_REQUIRED"
+            and item.get("selected_for_apply") is True
+            for item in bundles
+        ),
+        "deferred_action_units": sum(
+            item.get("status") == "ACTION_REQUIRED"
+            and item.get("selected_for_apply") is not True
+            for item in bundles
+        ),
         "planned_actions": (
-            sum(len(item["actions"]) for item in bundles)
+            sum(
+                len(item["actions"])
+                for item in bundles
+                if item.get("status") == "ACTION_REQUIRED"
+                and item.get("selected_for_apply") is True
+            )
             + len(wrapper_actions)
             + len(director_actions)
         ),
@@ -1002,6 +1048,7 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
     report: Dict[str, object] = {
         "schema": "movie-organizing-preprocessor/v1",
         "version": VERSION,
+        "plan_kind": "naming",
         "task_root": str(root),
         "standard_id": "movie-organizing",
         "naming_contract_sha256": contract_hash,
@@ -1059,18 +1106,25 @@ def _validate_action(
         return f"outside task root: {target}"
     if source is not None and not _inside(root, source, allow_root=False):
         return f"outside task root: {source}"
-    if name not in {"mkdir", "move_file", "rename_dir"}:
+    if name not in {"mkdir", "move_file", "rename_dir", "rename_path"}:
         return f"unsupported action: {name}"
     if planned_dirs is None:
         planned_dirs = set()
     if name == "mkdir":
         if target_mode is not None:
             return f"mkdir target exists: {target_lexical}"
-        if not target_lexical.parent.is_dir():
+        if not target_lexical.parent.is_dir() and _canonical(target_lexical.parent) not in planned_dirs:
             return f"mkdir parent missing: {target_lexical.parent}"
     elif name == "move_file":
         if source is None or source_mode is None or not stat.S_ISREG(source_mode):
             return f"missing source: {source_lexical if source_lexical is not None else source}"
+        if target_mode is not None:
+            return f"target exists: {target_lexical}"
+        if not target_lexical.parent.is_dir() and _canonical(target_lexical.parent) not in planned_dirs:
+            return f"target parent missing: {target_lexical.parent}"
+    elif name == "rename_path":
+        if source is None or source_mode is None:
+            return f"missing source path: {source_lexical if source_lexical is not None else source}"
         if target_mode is not None:
             return f"target exists: {target_lexical}"
         if not target_lexical.parent.is_dir() and _canonical(target_lexical.parent) not in planned_dirs:
@@ -1106,7 +1160,11 @@ def _verify_bundle(bundle: Dict[str, object], root: Path) -> List[str]:
             if source_video != expected_video and source_video.exists():
                 problems.append(f"old source still exists: {source_video}")
         source_dir = _canonical(str(bundle.get("source_movie_dir", "")))
-        if source_dir != expected_dir and source_dir.exists():
+        # For an orphan bundle, source_movie_dir is the director container
+        # itself and must remain after the loose video is moved into its new
+        # movie directory.  Standard/dispersed leaves, by contrast, are the
+        # legacy movie directories that must disappear.
+        if bundle.get("source_shape") != "orphan" and source_dir != expected_dir and source_dir.exists():
             problems.append(f"old movie dir still exists: {source_dir}")
         expected_targets = {
             _canonical(str(target))
@@ -1129,6 +1187,10 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
         return "plan schema mismatch"
     if plan.get("version") != VERSION:
         return "plan version mismatch"
+    if plan.get("plan_kind") != "naming":
+        return "plan_kind must be naming; slow_channel plans are not executable by the naming preprocessor"
+    if plan.get("slow_channel") is True:
+        return "slow_channel plans are not executable by the naming preprocessor"
     if plan.get("standard_id") != "movie-organizing":
         return "plan standard_id mismatch"
     if plan.get("naming_contract_sha256") != EXPECTED_NAMING_CONTRACT_SHA256:
@@ -1136,6 +1198,14 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
     for key in ("wrapper_actions", "director_actions"):
         if not isinstance(plan.get(key, []), list):
             return f"plan {key} missing or invalid"
+    bundles = plan.get("bundles")
+    if not isinstance(bundles, list):
+        return "plan bundles missing or invalid"
+    for index, bundle in enumerate(bundles):
+        if not isinstance(bundle, dict):
+            return f"plan bundle {index} is not an object"
+        if not isinstance(bundle.get("selected_for_apply"), bool):
+            return f"plan bundle {index} selected_for_apply must be boolean"
     plan_hash = plan.get("plan_hash")
     if not isinstance(plan_hash, str) or not plan_hash:
         return "plan hash missing"
@@ -1179,6 +1249,10 @@ def _plan_argument_error(plan: object, supplied_path: str | Path, root: Path) ->
         return "plan schema mismatch"
     if plan.get("version") != VERSION:
         return "plan version mismatch"
+    if plan.get("plan_kind") != "naming":
+        return "plan rejected: plan_kind must be naming; slow_channel plans are not executable"
+    if plan.get("slow_channel") is True:
+        return "plan rejected: slow_channel plans are not executable"
     if plan.get("standard_id") != "movie-organizing":
         return "plan standard_id mismatch"
     if plan.get("naming_contract_sha256") != EXPECTED_NAMING_CONTRACT_SHA256:
@@ -1187,6 +1261,11 @@ def _plan_argument_error(plan: object, supplied_path: str | Path, root: Path) ->
         return "plan scan_id missing"
     if not isinstance(plan.get("bundles"), list):
         return "plan bundles missing or invalid"
+    for index, bundle in enumerate(plan["bundles"]):
+        if not isinstance(bundle, dict):
+            return f"plan bundle {index} is not an object"
+        if not isinstance(bundle.get("selected_for_apply"), bool):
+            return f"plan bundle {index} selected_for_apply must be boolean"
     return _plan_integrity_error(plan, root)
 
 
@@ -1195,7 +1274,15 @@ def _fresh_plan_error(plan: Dict[str, object], root: Path) -> Optional[str]:
         fresh = make_plan(root, persist=False)
     except (OSError, ValueError) as error:
         return f"fresh plan failed: {error}"
-    for field in ("task_root", "version", "standard_id", "naming_contract_sha256", "scan_id", "plan_hash"):
+    for field in (
+        "task_root",
+        "version",
+        "plan_kind",
+        "standard_id",
+        "naming_contract_sha256",
+        "scan_id",
+        "plan_hash",
+    ):
         if field == "task_root":
             if _canonical(str(plan.get(field, ""))) != _canonical(str(fresh.get(field, ""))):
                 return "plan task_root does not match the fresh TASK_ROOT"
@@ -1271,6 +1358,14 @@ def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
     missing: List[str] = []
     for bundle in plan.get("bundles", []):
         if bundle.get("status") in {"NAMING_PASS", "ACTION_REQUIRED"}:
+            # A bounded plan intentionally carries deferred ACTION_REQUIRED
+            # units for inventory continuity.  They are not part of this
+            # apply/verify batch and must not make the selected batch fail.
+            if (
+                bundle.get("status") == "ACTION_REQUIRED"
+                and bundle.get("selected_for_apply") is False
+            ):
+                continue
             missing.extend(_verify_bundle(bundle, root_path))
     missing.extend(_verify_auxiliary_actions(plan, root_path))
     return {
@@ -1278,6 +1373,247 @@ def verify_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
         "naming_plan_only": True,
         "missing": missing,
         "error_summary": "; ".join(missing),
+    }
+
+
+def _empty_apply_recovery(*, status: str = "PASS") -> Dict[str, object]:
+    """Return explicit recovery fields for an apply with no mutations."""
+
+    return {
+        "rollback_status": status,
+        "rolled_back_actions": 0,
+        "manual_recovery_required": status == "FAIL",
+        "action_journal": [],
+    }
+
+
+def _rollback_executed_actions(
+    root: Path,
+    plan: Dict[str, object],
+    executed_actions: Sequence[Dict[str, object]],
+    action_journal: List[Dict[str, object]],
+) -> Tuple[str, int, bool, str]:
+    """Reverse successful actions without deleting anything.
+
+    Rename/move actions are returned to their original source path.  Directories
+    created by this plan must be empty before being moved into a recoverable
+    rollback archive; a non-empty or otherwise unsafe target leaves the caller
+    with an explicit manual-recovery requirement.
+    """
+
+    if not executed_actions:
+        return "PASS", 0, False, ""
+
+    plan_hash = str(plan.get("plan_hash", "unknown"))
+    rollback_root = root / WORK_RECORD_DIR / "recovery" / f"rollback-{plan_hash}"
+    try:
+        _validate_recovery_tree(root)
+        rollback_root.mkdir(parents=True, exist_ok=True)
+        if not rollback_root.is_dir() or rollback_root.is_symlink() or not _inside(
+            root, rollback_root, allow_root=False
+        ):
+            raise OSError(f"rollback directory is not a real in-root directory: {rollback_root}")
+    except OSError as error:
+        return "FAIL", 0, True, f"rollback setup failed: {error}"
+
+    rolled_back = 0
+    errors: List[str] = []
+    # Journal entries are one-per-successful action.  Update each entry in
+    # place so the final record remains compact and directly auditable.
+    journal_by_id = {str(item.get("id")): item for item in action_journal}
+    for reverse_index, action in enumerate(reversed(executed_actions), start=1):
+        action_id = str(action.get("id", ""))
+        name = str(action.get("action", action.get("type", "")))
+        target = _lexical(str(action.get("target", "")))
+        source_value = action.get("source")
+        source = _lexical(str(source_value)) if source_value else None
+        try:
+            if name == "mkdir":
+                mode = os.lstat(target).st_mode
+                if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                    raise OSError(f"created directory is not a real directory: {target}")
+                with os.scandir(target) as entries:
+                    if next(entries, None) is not None:
+                        raise OSError(f"created directory is not empty: {target}")
+                rollback_target = rollback_root / f"{reverse_index:04d}-{target.name}"
+                if os.path.lexists(rollback_target):
+                    raise OSError(f"rollback target already exists: {rollback_target}")
+                target.rename(rollback_target)
+            elif name in {"move_file", "rename_dir", "rename_path"} and source is not None:
+                target_mode = os.lstat(target).st_mode
+                if stat.S_ISLNK(target_mode):
+                    raise OSError(f"rollback source is a symlink: {target}")
+                if os.path.lexists(source):
+                    raise OSError(f"rollback destination already exists: {source}")
+                if not source.parent.is_dir():
+                    raise OSError(f"rollback destination parent is missing: {source.parent}")
+                target.rename(source)
+            else:
+                raise OSError(f"unsupported rollback action: {name}")
+        except (OSError, StopIteration) as error:
+            errors.append(f"{action_id or name}: {error}")
+            journal_by_id.get(action_id, {}).update(
+                {"status": "ROLLBACK_FAILED", "rollback_error": str(error)}
+            )
+            continue
+        rolled_back += 1
+        journal_by_id.get(action_id, {}).update({"status": "ROLLED_BACK"})
+
+    if errors:
+        return "FAIL", rolled_back, True, "; ".join(errors)
+    return "PASS", rolled_back, False, ""
+
+
+def execute_action_plan(
+    plan: Dict[str, object],
+    root: str | Path,
+    actions: Sequence[Dict[str, object]],
+    *,
+    dry_run: bool = False,
+    verify_callback: Optional[Callable[[], Dict[str, Any]]] = None,
+) -> Dict[str, object]:
+    """Execute a bounded generic action list with the preprocessor rollback engine.
+
+    The slow channel uses ``mkdir`` and ``rename_path`` only.  Keeping the
+    preflight, immediate re-check, action journal, and reverse rollback here
+    prevents it from growing a second mutation engine while preserving the
+    naming preprocessor's existing ``apply_plan`` behavior.
+    """
+
+    root_path = _canonical(root)
+    if _canonical(str(plan.get("task_root", ""))) != root_path:
+        return {
+            "status": "FAIL",
+            "executed_actions": 0,
+            "error_summary": "plan task_root mismatch or outside task root",
+            **_empty_apply_recovery(),
+        }
+
+    planned_dirs: set[Path] = set()
+    for action in actions:
+        if not isinstance(action, dict):
+            return {
+                "status": "FAIL",
+                "executed_actions": 0,
+                "error_summary": "action must be an object",
+                **_empty_apply_recovery(),
+            }
+        failure = _validate_action(action, root_path, planned_dirs)
+        if failure:
+            return {
+                "status": "FAIL",
+                "executed_actions": 0,
+                "error_summary": failure,
+                **_empty_apply_recovery(),
+            }
+        if str(action.get("action", action.get("type", ""))) == "mkdir":
+            planned_dirs.add(_canonical(str(action["target"])))
+
+    if dry_run:
+        return {
+            "status": "PASS",
+            "dry_run": True,
+            "planned_actions": len(actions),
+            "executed_actions": 0,
+            "error_summary": "",
+            "rollback_status": "NOT_RUN",
+            "rolled_back_actions": 0,
+            "manual_recovery_required": False,
+            "action_journal": [],
+        }
+
+    executed_actions: List[Dict[str, object]] = []
+    action_journal: List[Dict[str, object]] = []
+    executed = 0
+    for action in actions:
+        failure = _validate_action(action, root_path, planned_dirs)
+        if failure:
+            rollback_status, rolled_back, manual_recovery, rollback_error = _rollback_executed_actions(
+                root_path, plan, executed_actions, action_journal
+            )
+            details = f"apply blocked: {failure}"
+            if rollback_error:
+                details += f"; rollback: {rollback_error}"
+            return {
+                "status": "FAIL",
+                "executed_actions": executed,
+                "error_summary": details,
+                "rollback_status": rollback_status,
+                "rolled_back_actions": rolled_back,
+                "manual_recovery_required": manual_recovery,
+                "action_journal": action_journal,
+            }
+        name = str(action.get("action", action.get("type", "")))
+        target = _lexical(str(action.get("target", "")))
+        try:
+            if name == "mkdir":
+                target.mkdir()
+            else:
+                source = _lexical(str(action["source"]))
+                source.rename(target)
+        except OSError as error:
+            rollback_status, rolled_back, manual_recovery, rollback_error = _rollback_executed_actions(
+                root_path, plan, executed_actions, action_journal
+            )
+            details = f"apply failed: {error}"
+            if rollback_error:
+                details += f"; rollback: {rollback_error}"
+            return {
+                "status": "FAIL",
+                "executed_actions": executed,
+                "error_summary": details,
+                "rollback_status": rollback_status,
+                "rolled_back_actions": rolled_back,
+                "manual_recovery_required": manual_recovery,
+                "action_journal": action_journal,
+            }
+        executed += 1
+        executed_actions.append(action)
+        action_journal.append(
+            {
+                "id": str(action.get("id", "")),
+                "action": name,
+                "source": str(action.get("source", "")),
+                "target": str(action.get("target", "")),
+                "status": "APPLIED",
+            }
+        )
+
+    if verify_callback is not None:
+        try:
+            verification = verify_callback()
+        except Exception as error:  # pragma: no cover - defensive boundary
+            verification = {"status": "FAIL", "error_summary": f"verification raised: {error}"}
+        if not isinstance(verification, dict) or verification.get("status") != "PASS":
+            rollback_status, rolled_back, manual_recovery, rollback_error = _rollback_executed_actions(
+                root_path, plan, executed_actions, action_journal
+            )
+            details = "post-apply verification failed: " + str(
+                verification.get("error_summary", "verification failed")
+                if isinstance(verification, dict)
+                else "verification returned invalid result"
+            )
+            if rollback_error:
+                details += f"; rollback: {rollback_error}"
+            return {
+                "status": "FAIL",
+                "executed_actions": executed,
+                "error_summary": details,
+                "rollback_status": rollback_status,
+                "rolled_back_actions": rolled_back,
+                "manual_recovery_required": manual_recovery,
+                "action_journal": action_journal,
+            }
+
+    return {
+        "status": "PASS",
+        "planned_actions": len(actions),
+        "executed_actions": executed,
+        "error_summary": "",
+        "rollback_status": "NOT_RUN",
+        "rolled_back_actions": 0,
+        "manual_recovery_required": False,
+        "action_journal": action_journal,
     }
 
 
@@ -1289,17 +1625,26 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             "status": "FAIL",
             "executed_actions": 0,
             "error_summary": "plan task_root mismatch or outside task root",
+            **_empty_apply_recovery(),
         }
 
     bundle_actions: List[Dict[str, object]] = []
     planned_dirs: set[Path] = set()
     for bundle in plan.get("bundles", []):
-        if bundle.get("status") != "ACTION_REQUIRED":
+        if (
+            bundle.get("status") != "ACTION_REQUIRED"
+            or bundle.get("selected_for_apply") is False
+        ):
             continue
         for action in bundle.get("actions", []):
             failure = _validate_action(action, root_path, planned_dirs)
             if failure:
-                return {"status": "FAIL", "executed_actions": 0, "error_summary": failure}
+                return {
+                    "status": "FAIL",
+                    "executed_actions": 0,
+                    "error_summary": failure,
+                    **_empty_apply_recovery(),
+                }
             bundle_actions.append(action)
             if str(action.get("action", action.get("type", ""))) == "mkdir":
                 planned_dirs.add(_canonical(str(action["target"])))
@@ -1310,13 +1655,23 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
         for action in phase_actions:
             failure = _validate_action(action, root_path, planned_dirs)
             if failure:
-                return {"status": "FAIL", "executed_actions": 0, "error_summary": failure}
+                return {
+                    "status": "FAIL",
+                    "executed_actions": 0,
+                    "error_summary": failure,
+                    **_empty_apply_recovery(),
+                }
             if str(action.get("action", action.get("type", ""))) == "mkdir":
                 planned_dirs.add(_canonical(str(action["target"])))
 
     integrity_error = _plan_integrity_error(plan, root_path)
     if integrity_error:
-        return {"status": "FAIL", "executed_actions": 0, "error_summary": integrity_error}
+        return {
+            "status": "FAIL",
+            "executed_actions": 0,
+            "error_summary": integrity_error,
+            **_empty_apply_recovery(),
+        }
 
     if dry_run:
         return {
@@ -1325,9 +1680,16 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             "planned_actions": len(bundle_actions) + len(wrapper_actions) + len(director_actions),
             "executed_actions": 0,
             "error_summary": "",
+            "rollback_status": "NOT_RUN",
+            "rolled_back_actions": 0,
+            "manual_recovery_required": False,
+            "action_journal": [],
         }
 
     executed = 0
+    executed_actions: List[Dict[str, object]] = []
+    action_journal: List[Dict[str, object]] = []
+
     def execute_phase(phase_actions: Sequence[Dict[str, object]], phase_name: str) -> Optional[str]:
         nonlocal executed
         for action in phase_actions:
@@ -1352,6 +1714,16 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
             except OSError as error:
                 return f"apply failed: {error}"
             executed += 1
+            executed_actions.append(action)
+            action_journal.append(
+                {
+                    "id": str(action.get("id", "")),
+                    "action": name,
+                    "source": str(action.get("source", "")),
+                    "target": str(action.get("target", "")),
+                    "status": "APPLIED",
+                }
+            )
         return None
 
     for phase_name, phase_actions in (
@@ -1361,20 +1733,48 @@ def apply_plan(plan: Dict[str, object], root: str | Path, dry_run: bool = False)
     ):
         phase_error = execute_phase(phase_actions, phase_name)
         if phase_error:
+            rollback_status, rolled_back, manual_recovery, rollback_error = _rollback_executed_actions(
+                root_path, plan, executed_actions, action_journal
+            )
+            details = f"{phase_name} phase blocked: {phase_error}"
+            if rollback_error:
+                details += f"; rollback: {rollback_error}"
             return {
                 "status": "FAIL",
                 "executed_actions": executed,
-                "error_summary": f"{phase_name} phase blocked: {phase_error}",
+                "error_summary": details,
+                "rollback_status": rollback_status,
+                "rolled_back_actions": rolled_back,
+                "manual_recovery_required": manual_recovery,
+                "action_journal": action_journal,
             }
 
     verification = verify_plan(plan, root_path)
     if verification["status"] != "PASS":
+        rollback_status, rolled_back, manual_recovery, rollback_error = _rollback_executed_actions(
+            root_path, plan, executed_actions, action_journal
+        )
+        details = "post-apply verification failed: " + str(verification["error_summary"])
+        if rollback_error:
+            details += f"; rollback: {rollback_error}"
         return {
             "status": "FAIL",
             "executed_actions": executed,
-            "error_summary": "post-apply verification failed: " + str(verification["error_summary"]),
+            "error_summary": details,
+            "rollback_status": rollback_status,
+            "rolled_back_actions": rolled_back,
+            "manual_recovery_required": manual_recovery,
+            "action_journal": action_journal,
         }
-    return {"status": "PASS", "executed_actions": executed, "error_summary": ""}
+    return {
+        "status": "PASS",
+        "executed_actions": executed,
+        "error_summary": "",
+        "rollback_status": "NOT_RUN",
+        "rolled_back_actions": 0,
+        "manual_recovery_required": False,
+        "action_journal": action_journal,
+    }
 
 
 def _write_result(root: Path, mode: str, plan: Dict[str, object], result: Dict[str, object]) -> Path:

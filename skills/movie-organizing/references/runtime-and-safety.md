@@ -13,7 +13,7 @@
 - 初扫只收路径、目录层级、文件名/类型、视频/NFO/字幕存在性、结构异常和目标碰撞所需信息。
 - 初扫禁止读 NFO 内容、跑 `ffprobe`、查 IMDb、算完整 hash、去重或深度归类；文件系统可枚举所有条目，但推理按同类模式和 10–20 项批次进行。
 - `NAMING_PASS` 只在 `CORE_GATE` 前进入命名对账，不读 NFO、跑 `ffprobe`/IMDb、算 hash、去重或深查；CORE 通过后必须与所有 active 电影一起进入跨目录 DEDUPE 候选扫描。
-- `ACTION_REQUIRED` 覆盖唯一可判定的语法改名，以及需要建夹/rehome 的 `orphan`、`dispersed`、`collection` 单元；不得无动作通过；语义事实变化或不确定即为 `EXCEPTION`，进入慢通道。
+- `ACTION_REQUIRED` 只覆盖唯一可判定的语法改名，以及确定的单片 `orphan`/`dispersed` leaf 建夹或 rehome；多视频合集、特殊容器或归属不明一律是 `EXCEPTION`，进入慢通道，不得无动作通过。
 - 目标碰撞必须进入 `EXCEPTION`；不得临时加后缀、覆盖或改写锁定计划。
 
 ## Expected 路径与来源形态
@@ -41,7 +41,7 @@
 - `ACTION_REQUIRED` 先形成同一条 bundle：expected 路径、`source_director_dir`/`expected_director_dir`、`source_shape`、主视频、现有同 stem NFO（缺失则记录，不补造）、每个带语言标识字幕、电影夹/导演夹 old/new，以及必要 `mkdir`/`rehome`；身份不确定时不要在快通道猜配对。
 - 通过计划门禁后固定执行：**必要目标目录（计划内 `mkdir`）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 已证明为空的 wrapper 骨架一次性可逆归档到 `_work-record_/flattened-empty/` → 导演夹定位/改名 → 现场复扫**。对已有容器仍子项先、父目录后；普通 trash 不在命名序列内。
 - wrapper 只允许在其全部可确定影片移出后、递归确认无文件/媒体/symlink 且只剩空目录骨架时归档；未知文件、异常单元、目标碰撞或无法证明为空时相关单元整体 `EXCEPTION`、零 mutation。导演夹只有全部受影响子项闭环、wrapper 归档完成、复扫 PASS 且目标不冲突时才允许改名；否则若旧夹/影片单元仍在 active tree，`CORE_GATE` 必须失败。
-- 身份/配对不确定时，将最小完整电影单元（含主视频和可追溯 sidecar）移入 `TASK_ROOT/_待确认_`（原结构与恢复路径）；若系统故障无法移动则原地冻结且 CORE_GATE 必须失败，不得留在 active tree 后算通过。
+- 身份/配对不确定时：普通且非 `TASK_ROOT`/非导演 anchor 的异常 source 若含 unknown/child/multi-video，source 容器本身就是最小完整可逆单元，整体移入 `TASK_ROOT/_待确认_`，禁止只抽一个视频留下残骸；`TASK_ROOT` 或导演 anchor 不得整体移动，只能按明确 main video + 唯一 sidecar 隔离。此边界不等于扩大整个导演或整批媒体；若系统故障无法移动则原地冻结且 CORE_GATE 必须失败。
 - 回收统一到 `TASK_ROOT/_trash_<task-id>_<YYYYMMDD>/...`，并保持原相对路径；计划中必须预先锁定目标。合同已明确为垃圾的无语言字幕仅在 `DEDUPE_GATE=PASS` 后按计划 `mv`，不得猜语言。
 - `_work-record_`、`_work-record_/recovery/`、`_待确认_`、`_trash_*` 均为可写且在任务内。
 

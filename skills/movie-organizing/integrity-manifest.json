@@ -1,26 +1,26 @@
 {
   "schema": "movie-organizing-integrity/v1",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "files": [
     {
       "path": "SKILL.md",
-      "size": 28769,
-      "sha256": "708d648851839c73cabd5662ff47de2594670fbeefe8fb10e7a3647819b4e23e"
+      "size": 10938,
+      "sha256": "6bf74123a675e18831f778d6e07424ed10ac7918684ad8e87abbb15ddcae07dc"
     },
     {
       "path": "agents/openai.yaml",
-      "size": 1174,
-      "sha256": "f2478aeef46109b4fa56c3beb9c416c0f742e8ecfac955a3cc354b520d8fd9de"
+      "size": 406,
+      "sha256": "9fe56443ffd1d7b6fc53df89b1d6bf819996aa4abd73e4896a03c87da60630da"
     },
     {
       "path": "references/failure-handling.md",
-      "size": 12874,
-      "sha256": "054341f3fc60085c77d4adb3dae87ae07e9c8332105b44b67d62ecfa0be6c5fc"
+      "size": 13527,
+      "sha256": "0cbb2ff6f04bac5730067f720d7b55b79003736c8b39e454db7b2c586c02a796"
     },
     {
       "path": "references/lessons-and-audit-checklist.md",
-      "size": 5862,
-      "sha256": "52675a16b0a8cb616d9632ec77f85ff74e74d03274d6b13fb3f36dce1566faac"
+      "size": 5979,
+      "sha256": "864d009fcf3c2a22ed2b4c9795252787d1802e576ac4af6da05b928c7c730bda"
     },
     {
       "path": "references/naming-contract.md",
@@ -29,23 +29,33 @@
     },
     {
       "path": "references/runtime-and-safety.md",
-      "size": 8839,
-      "sha256": "aa5b64943aee04afe6169e2fd65376429e506e714a90d4d0aa2fe065ce0eee0b"
+      "size": 9063,
+      "sha256": "7c81c2b0cc95ff9900277826b968bfef0953ac132a3cc856df443d4832274ae2"
     },
     {
       "path": "references/triage-and-edge-cases.md",
-      "size": 9302,
-      "sha256": "2067d4a85dd1eff219710aaaf87e89a92ec41d2e242c98b73bc5282a23d6b2ed"
+      "size": 10419,
+      "sha256": "433d32a6725728481fe1678d9cd9e4d27ff48c2324a6c665f774cfebe532b2f4"
     },
     {
       "path": "scripts/movie_organizing_audit.py",
-      "size": 40808,
-      "sha256": "73f29f851f610b24df18afb2a0431a6fc56a6dc63006ceab8d4eefb78dce7046"
+      "size": 42262,
+      "sha256": "426e9286ac1bf89b7d68ab017695960d699e5a287ff47de66d620d73e3e85797"
     },
     {
       "path": "scripts/movie_organizing_preprocessor.py",
-      "size": 64984,
-      "sha256": "7b52b91556a848bc2ce4be92cab354eace3e3df506408d1f5fe7d7d036301e94"
+      "size": 81637,
+      "sha256": "4d3688f2e85211604d48197eab18e8d6afcd2a7a94cbc740a4cbe47c7eaa6aca"
+    },
+    {
+      "path": "scripts/movie_organizing_slowpath.py",
+      "size": 73028,
+      "sha256": "07fcbff651c43602245814cada1af5a464fbeb2990929cb283ce5fb45066a4d3"
+    },
+    {
+      "path": "scripts/movie_organizing_task.py",
+      "size": 20793,
+      "sha256": "ad60474b35d567faa4ff4fe1298a534318722900c954025515cec56e488866ba"
     }
   ]
 }
