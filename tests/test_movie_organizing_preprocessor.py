@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -74,7 +75,7 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             video = self._make(movie_dir, "Original Movie.1949.1080p.BluRay.x264-RLS.mkv")
 
             plan = self._plan(root)
-            self.assertEqual("1.3.5", plan["version"])
+            self.assertEqual("1.3.6", plan["version"])
             self.assertEqual(1, len(plan.get("director_actions", [])))
             director_action = plan["director_actions"][0]
             self.assertEqual(str(old_director.resolve()), director_action["source"])
@@ -100,6 +101,39 @@ class MovieOrganizingPreprocessorTest(unittest.TestCase):
             self.assertTrue((final_movie / video.name).is_file())
             self.assertFalse(old_director.exists())
             self.assertFalse(movie_dir.exists())
+            final_video = final_movie / video.name
+            final_nfo = final_video.with_suffix(".nfo")
+            final_nfo.write_text(
+                '<movie><title>影</title><originaltitle>Original Movie</originaltitle>'
+                '<year>1949</year><uniqueid type="tmdb">1001</uniqueid></movie>',
+                encoding="utf-8",
+            )
+            video_stat = final_video.stat()
+            lock = {
+                "schema": "movie-organizing-nfo/identity-lock/v1",
+                "version": "1.3.6",
+                "task_root": str(root.resolve()),
+                "plan_hash": "fixture-1001",
+                "verified_at": "fixture",
+                "locks": [
+                    {
+                        "video_path": str(final_video.resolve()),
+                        "nfo_path": str(final_nfo.resolve()),
+                        "video_fingerprint": {
+                            "path": str(final_video.resolve()),
+                            "exists": True,
+                            "size": video_stat.st_size,
+                            "mtime_ns": video_stat.st_mtime_ns,
+                        },
+                        "nfo_sha256": hashlib.sha256(final_nfo.read_bytes()).hexdigest(),
+                        "tmdb_id": 1001,
+                    }
+                ],
+            }
+            recovery = root / "_work-record_" / "recovery"
+            (recovery / "nfo-identity-lock-fixture.json").write_text(
+                json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
             audit = subprocess.run(
                 [sys.executable, str(SCRIPT_PATH.parent / "movie_organizing_audit.py"), "audit", "--task-root", str(root)],
                 check=True,

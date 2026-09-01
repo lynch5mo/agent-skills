@@ -18,7 +18,7 @@
 
 ## Expected 路径与来源形态
 
-- 每个视频单元在分类前都要记录 `expected_director_dir`、`expected_movie_dir`、`expected_video_path`、现有 NFO 的 `expected_nfo_path`、字幕的 `expected_subtitle_paths` 和 `source_shape`；缺失 sidecar 明确记录缺失，不造文件。
+- 每个视频单元在分类前都要记录 `expected_director_dir`、`expected_movie_dir`、`expected_video_path`、现有 NFO 的 `expected_nfo_path`、字幕的 `expected_subtitle_paths` 和 `source_shape`；命名阶段只记录缺失，NFO_GATE 阶段仅由官方 TMDb 脚本在身份锁定后补同 stem NFO。
 - `source_shape` 仅取 `standard`（导演直下标准层级且路径精确）、`orphan`（视频不在电影夹）、`dispersed`（影片散落、挂在错误导演层级或位于任意 wrapper 深度）或 `collection`（合集容器含多个影片/导演单元）。
 - 期望路径必须由命名合同和已闭环的身份/导演/年份/release 事实逐字生成；无法唯一推导时记录缺失原因并进入 `EXCEPTION`，不得用占位动作代替。
 
@@ -38,7 +38,7 @@
 
 ## Sidecar、父目录与清场
 
-- `ACTION_REQUIRED` 先形成同一条 bundle：expected 路径、`source_director_dir`/`expected_director_dir`、`source_shape`、主视频、现有同 stem NFO（缺失则记录，不补造）、每个带语言标识字幕、电影夹/导演夹 old/new，以及必要 `mkdir`/`rehome`；身份不确定时不要在快通道猜配对。
+- `ACTION_REQUIRED` 先形成同一条 bundle：expected 路径、`source_director_dir`/`expected_director_dir`、`source_shape`、主视频、现有同 stem NFO（命名阶段缺失先记录）、每个带语言标识字幕、电影夹/导演夹 old/new，以及必要 `mkdir`/`rehome`；身份不确定时不要在快通道猜配对。CORE 通过后，NFO_GATE 另由官方脚本严格匹配数据库并补 NFO。
 - 通过计划门禁后固定执行：**必要目标目录（计划内 `mkdir`）→ 视频改名/rehome → NFO/字幕 → 电影夹定位/改名 → 已证明为空的 wrapper 骨架一次性可逆归档到 `_work-record_/flattened-empty/` → 导演夹定位/改名 → 现场复扫**。对已有容器仍子项先、父目录后；普通 trash 不在命名序列内。
 - wrapper 只允许在其全部可确定影片移出后、递归确认无文件/媒体/symlink 且只剩空目录骨架时归档；未知文件、异常单元、目标碰撞或无法证明为空时相关单元整体 `EXCEPTION`、零 mutation。导演夹只有全部受影响子项闭环、wrapper 归档完成、复扫 PASS 且目标不冲突时才允许改名；否则若旧夹/影片单元仍在 active tree，`CORE_GATE` 必须失败。
 - 身份/配对不确定时：普通且非 `TASK_ROOT`/非导演 anchor 的异常 source 若含 unknown/child/multi-video，source 容器本身就是最小完整可逆单元，整体移入 `TASK_ROOT/_待确认_`，禁止只抽一个视频留下残骸；`TASK_ROOT` 或导演 anchor 不得整体移动，只能按明确 main video + 唯一 sidecar 隔离。此边界不等于扩大整个导演或整批媒体；若系统故障无法移动则原地冻结且 CORE_GATE 必须失败。

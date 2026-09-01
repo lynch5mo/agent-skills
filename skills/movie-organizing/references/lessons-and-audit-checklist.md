@@ -4,7 +4,7 @@
 
 实操风险点只提供候选识别与证据，必须服从命名合同、CORE/DEDUPE 门禁和可逆安全边界。
 
-## v1.3.5 核心门禁风险总表（每批执行前后核对）
+## v1.3.6 核心门禁风险总表（每批执行前后核对）
 
 1. `TASK_ROOT` 已锁定且无越界路径（含 symlink 解析）；只有一份工作单，恢复先现场复扫。
 2. 初扫仅有路径、层级、文件名/类型、视频/NFO/字幕存在性、结构异常和碰撞信息；没有读 NFO 内容、跑 `ffprobe`/IMDb、完整 hash、去重或深度归类。
@@ -12,14 +12,17 @@
 4. 每个视频单元先记录 `source_director_dir`、`expected_director_dir`、`expected_movie_dir`、`expected_video_path`、NFO/字幕 expected 路径和 `source_shape`，再判唯一三态 `NAMING_PASS`、`ACTION_REQUIRED` 或 `EXCEPTION`。
 5. `NAMING_PASS` 只有实际路径逐字等于全部 expected 路径、`source_shape=standard` 且结构无异常；它仅表示命名阶段合格，CORE 前不深查，CORE 后必须参加统一 DEDUPE 候选扫描；不得凭“看起来规范”自报。
 6. `ACTION_REQUIRED` 有完整 bundle（导演夹、电影夹、视频、现有 NFO 或明确缺失记录、每个字幕、mkdir/rehome、预锁 trash 映射、证据、回滚）；确定的单片孤立/分散 leaf 才可快通道建夹并 rehome。多视频合集、特殊容器或归属不明必须是 `EXCEPTION`，交 slowpath 逐片判断。任意 wrapper 深度的可确定 leaf 均须拍平；wrapper 全部移空后才可一次性可逆归档到 `_work-record_/flattened-empty/`，未知文件、symlink 或异常单元不得部分移动。
-7. 批次限制 10–20 个视频单元；计划具备 `scan_id/standard_id/plan_hash`；公共动作字段为 `id/action/target/evidence/rollback/preconditions/postconditions`，仅 rename/rehome/trash 另需 `source`，mkdir 不带伪 source；canonical/old exists/new absent 或 mkdir 目标不存在，复扫为 old absent + new exists + expected exact；无 `old==new`、重复目标或 sentinel。
+7. 批次限制 10–20 个视频单元；active 视频 >20、导演数 >3 或预估动作 >50 时强制大库模式（单导演、最多 10 项，异常 slowpath 最多 5 项）。计划具备 `scan_id/standard_id/plan_hash`；公共动作字段为 `id/action/target/evidence/rollback/preconditions/postconditions`，仅 rename/rehome/trash 另需 `source`，mkdir 不带伪 source；canonical/old exists/new absent 或 mkdir 目标不存在，复扫为 old absent + new exists + expected exact；无 `old==new`、重复目标或 sentinel。
 8. 目标碰撞、语义变化、特殊结构或配对不明均进入 `EXCEPTION`；无法闭环的最小完整电影单元入 `_待确认_`，原地冻结使 CORE_GATE 失败。
-9. `CORE_GATE` 前禁止普通清理/去重；CORE 通过后所有 active 电影（含 `NAMING_PASS`）先按身份及同一 edition/cut 去重。完整 hash+清单只用于精确重复；质量按 `4K > 1080p > 720p`，同分辨率须有码率/画质证据，不得凭文件名/大小。
+9. `CORE_GATE` 前禁止普通清理/去重；CORE 通过后先运行 NFO_GATE，再让所有 active 电影（含 `NAMING_PASS`）按数据库身份及同一 edition/cut 去重。NFO 只接受 TMDb 严格唯一匹配；已有 ID 也须 API 核验，正式 verify 后的 identity-lock 才算证据。完整 hash+清单只用于精确重复；质量按 `4K > 1080p > 720p`，同分辨率须有码率/画质证据，不得凭文件名/大小。
 10. 去重较差副本只能可逆 `mv` 到固定 trash 并保留证据/回滚；无法裁决的重复关系整体进 `_待确认_` 后记 `pending_duplicate_groups`，不计入 active DEDUPE 计数但阻止全部完成；`unresolved_duplicate_groups_in_active_tree`、`inferior_copies_remaining_in_active_tree`、`dedupe_actions_remaining`、`partial_dedupe_actions` 全为 0 才过 `DEDUPE_GATE`。
 11. CORE active 计数 `active_nonconforming_director_dirs`、`active_nonconforming_movie_dirs`、`active_nonconforming_video_files`、`active_nonconforming_nfo_files`、`active_nonconforming_subtitle_files`、`active_orphan_videos`、`active_collection_containers_with_videos`、`active_misfiled_movie_dirs`、`required_actions_remaining`、`partial_bundles`、`unaccounted_video_units` 全为 0；安全完整移入 `_待确认_` 且具备 pending 目标/来源/恢复记录的单元标记 `accounted_pending`，不计 active 违规或 `unaccounted_video_units`；该值只统计既无 active 最终路径又无完整 pending 记录的单元。旧项留在 active tree 或冻结不算通过。
 12. 核心执行顺序为必要目标目录（mkdir）→ 视频 → NFO/字幕 → 电影夹 → wrapper 空骨架可逆归档 → 导演夹（每导演一次）→ 现场复扫；CORE_GATE 后才去重/DEDUPE_GATE，再普通 trash/清理和终扫。
 13. `DEDUPE_GATE` 未通过不得普通清理或终扫；trash/pending 均在 TASK_ROOT 内且可逆，冲突不删不覆盖，待确认只收最小完整单元。
-14. 完成语义只能是：CORE 未过则不得声称完成；active CORE、active DEDUPE、普通清理和终扫均 PASS 但待确认>0 仅报“主目录四项核心整理已完成，待确认 N项”；只有待确认=0 且 CORE/DEDUPE/清理/终扫均 PASS 才报“全部整理完成（待确认=0且终扫PASS）”。
+14. 完成语义只能是：CORE/NFO 未过则不得声称完成；active CORE、NFO、DEDUPE、普通清理和终扫均 PASS 但待确认>0 仅报“主目录核心整理已完成，待确认 N项”；只有待确认=0 且 CORE/NFO/DEDUPE/清理/终扫均 PASS 才报“全部整理完成（待确认=0且终扫PASS）”。
+
+15. 大库每批必须 `plan → dry-run → apply → verify → seal`；`progress.json` 的 `sealed=true` 只能由正式 verify PASS 的 seal 写入，不能由 Agent 或自然语言进度自证。恢复/压缩后只听 `task.py status` 的 `next_allowed`。
+16. NFO `PENDING_*` 必须在同一事务生成可逆 `pending_isolation`，将完整电影夹放入当前 `TASK_ROOT/_待确认_/原导演路径/`，并以 source/target/tree hash/rollback 验证；隔离未完成或漂移立即 STOP，隔离成功才 fresh audit 继续。
 
 ## 对照到故障卡
 

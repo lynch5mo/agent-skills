@@ -23,9 +23,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 EXPECTED_NAMING_CONTRACT_SHA256 = "c4a50e6cf92c230da3ad5e19092d80167b5379b6fd34eb919f8db7a6cf5c3a12"
 MAX_SELECTED_ACTION_UNITS = 20
+LARGE_LIBRARY_VIDEO_THRESHOLD = 20
+LARGE_LIBRARY_DIRECTOR_THRESHOLD = 3
+LARGE_LIBRARY_ACTION_THRESHOLD = 50
+LARGE_LIBRARY_BATCH_LIMIT = 10
 
 VIDEO_EXTENSIONS = {
     ".avi",
@@ -44,6 +48,12 @@ WORK_RECORD_DIR = "_work-record_"
 PENDING_DIR = "_待确认_"
 TRASH_PREFIX = "_trash_"
 EXCLUDED_NAMES = {WORK_RECORD_DIR, PENDING_DIR}
+
+
+def _timestamp() -> str:
+    """Return a collision-resistant local timestamp for recovery filenames."""
+
+    return datetime.now().strftime("%Y%m%dT%H%M%S%f")
 
 
 def _canonical(path: str | Path) -> Path:
@@ -697,6 +707,7 @@ def _plan_signature(
     bundles: Iterable[Dict[str, object]],
     wrapper_actions: Optional[Iterable[Dict[str, object]]] = None,
     director_actions: Optional[Iterable[Dict[str, object]]] = None,
+    metadata: Optional[Dict[str, object]] = None,
 ) -> str:
     payload_object: object = list(bundles)
     if wrapper_actions is not None or director_actions is not None:
@@ -705,6 +716,8 @@ def _plan_signature(
             "wrapper_actions": list(wrapper_actions or []),
             "director_actions": list(director_actions or []),
         }
+    if metadata is not None:
+        payload_object = {"payload": payload_object, "metadata": metadata}
     payload = json.dumps(payload_object, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -713,6 +726,114 @@ def _mark_exception(bundle: Dict[str, object], reason: str) -> None:
     bundle["status"] = "EXCEPTION"
     bundle["exception"] = reason
     bundle["actions"] = []
+
+
+def _write_large_library_checkpoints(
+    root: Path,
+    plan: Dict[str, object],
+    inventory_payload: Sequence[Dict[str, object]],
+) -> None:
+    """Persist compact machine-readable checkpoints for long-running batches.
+
+    These files are continuity aids only.  They never authorize completion;
+    ``audit`` must rescan the live tree before the next batch is opened.
+    """
+
+    work = root / WORK_RECORD_DIR
+    work.mkdir(parents=True, exist_ok=True)
+    inventory_path = work / "inventory.jsonl"
+    inventory_lines: List[str] = []
+    bundles = plan.get("bundles", [])
+    bundle_by_parent = {
+        str(item.get("source_movie_dir", "")): item
+        for item in bundles
+        if isinstance(item, dict)
+    }
+    for item in inventory_payload:
+        parent = str(item.get("parent", ""))
+        bundle = bundle_by_parent.get(parent, {})
+        inventory_lines.append(
+            json.dumps(
+                {
+                    "parent": parent,
+                    "videos": item.get("videos", []),
+                    "status": bundle.get("status", "UNACCOUNTED"),
+                    "source_shape": bundle.get("source_shape", ""),
+                    "director": bundle.get("source_director_dir", ""),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+    temporary_inventory = inventory_path.with_name(
+        f".{inventory_path.name}.tmp-{os.getpid()}-{_timestamp()}"
+    )
+    temporary_inventory.write_text(
+        "\n".join(inventory_lines) + ("\n" if inventory_lines else ""),
+        encoding="utf-8",
+    )
+    temporary_inventory.replace(inventory_path)
+
+    summary = plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}
+    progress = {
+        "schema": "movie-organizing-progress/v1",
+        "version": VERSION,
+        "task_root": str(root),
+        "large_library_mode": bool(plan.get("large_library_mode")),
+        "sealed": False,
+        "current_batch": {
+            "plan_hash": plan.get("plan_hash", ""),
+            "director": plan.get("batch_director", ""),
+            "selected_units": summary.get("selected_units", 0),
+            "batch_limit": plan.get("batch_limit", MAX_SELECTED_ACTION_UNITS),
+        },
+        "counts": {
+            "total_units": summary.get("total_units", 0),
+            "active_video_count": summary.get("active_video_count", 0),
+            "remaining_action_units": summary.get("action_required", 0),
+            "deferred_action_units": summary.get("deferred_action_units", 0),
+        },
+        "next_allowed": "preprocess",
+    }
+    progress_path = work / "progress.json"
+    temporary_progress = progress_path.with_name(
+        f".{progress_path.name}.tmp-{os.getpid()}-{_timestamp()}"
+    )
+    temporary_progress.write_text(
+        json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    temporary_progress.replace(progress_path)
+
+
+def _mark_batch_sealed(root: Path, plan: Dict[str, object], seal_path: Path) -> None:
+    """Mark one batch sealed only after ``seal_plan`` passed formal verify."""
+
+    _validate_recovery_tree(root)
+    work = root / WORK_RECORD_DIR
+    progress_path = work / "progress.json"
+    if not progress_path.is_file() or progress_path.is_symlink():
+        raise OSError("large-library progress checkpoint is missing or unsafe")
+    try:
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise OSError(f"large-library progress checkpoint is invalid: {error}") from error
+    if not isinstance(progress, dict):
+        raise OSError("large-library progress checkpoint must be an object")
+    current = progress.get("current_batch") if isinstance(progress.get("current_batch"), dict) else {}
+    if current.get("plan_hash") != plan.get("plan_hash"):
+        raise OSError("large-library progress checkpoint plan hash drifted before seal")
+    progress.update(
+        {
+            "sealed": True,
+            "sealed_plan_hash": plan.get("plan_hash", ""),
+            "sealed_result_path": str(seal_path),
+            "sealed_at": datetime.now().isoformat(timespec="seconds"),
+            "next_allowed": "audit",
+        }
+    )
+    temporary = progress_path.with_name(f".{progress_path.name}.tmp-{os.getpid()}-{_timestamp()}")
+    temporary.write_text(json.dumps(progress, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(progress_path)
 
 
 def _destination_key(path: str | Path) -> Tuple[str, str]:
@@ -995,8 +1116,10 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
     # A director target collision is a batch-level conflict: no child of that
     # director may mutate while the parent cannot be renamed safely.
     _mark_director_target_collisions(root, bundles)
-    # Keep the complete inventory in the plan, but select at most one bounded
-    # batch of ACTION_REQUIRED units for this apply.  Deferred units remain
+    # Keep the complete inventory in the plan, but select a bounded batch of
+    # ACTION_REQUIRED units for this apply.  Large libraries are deliberately
+    # narrowed to one director and ten units so a long-running Agent never
+    # carries a whole library in context.  Deferred units remain
     # ACTION_REQUIRED (never a false NAMING_PASS) and are selected by the next
     # fresh plan after this batch is verified.
     action_units = [
@@ -1004,9 +1127,48 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         for item in bundles
         if item.get("status") == "ACTION_REQUIRED"
     ]
+    director_keys = sorted(
+        {
+            str(item.get("source_director_dir", ""))
+            for item in bundles
+            if item.get("source_director_dir")
+        }
+    )
+    estimated_actions = sum(len(item.get("actions", [])) for item in bundles)
+    # ``bundles`` are filesystem units and a collection bundle can contain
+    # several active videos.  Large-library mode is triggered by the actual
+    # active video count, not merely by the number of parent directories.
+    active_video_count = sum(
+        len(videos)
+        for videos in scanned.values()
+    )
+    large_library_mode = bool(
+        active_video_count > LARGE_LIBRARY_VIDEO_THRESHOLD
+        or len(director_keys) > LARGE_LIBRARY_DIRECTOR_THRESHOLD
+        or estimated_actions > LARGE_LIBRARY_ACTION_THRESHOLD
+    )
+    batch_director = ""
+    if large_library_mode and action_units:
+        action_directors = sorted(
+            {
+                str(item.get("source_director_dir", ""))
+                for item in action_units
+                if item.get("source_director_dir")
+            }
+        )
+        batch_director = action_directors[0] if action_directors else ""
     for item in bundles:
         item["selected_for_apply"] = False
-    for item in action_units[:MAX_SELECTED_ACTION_UNITS]:
+    selected_action_units = (
+        [
+            item
+            for item in action_units
+            if str(item.get("source_director_dir", "")) == batch_director
+        ][:LARGE_LIBRARY_BATCH_LIMIT]
+        if large_library_mode
+        else action_units[:MAX_SELECTED_ACTION_UNITS]
+    )
+    for item in selected_action_units:
         item["selected_for_apply"] = True
     wrapper_actions = _plan_wrapper_actions(root, bundles)
     director_actions = _plan_director_actions(root, bundles)
@@ -1037,6 +1199,13 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         ),
         "wrapper_archives": sum(1 for item in wrapper_actions if item.get("action") == "rename_dir"),
         "director_renames": len(director_actions),
+        "large_library_mode": large_library_mode,
+        "director_count": len(director_keys),
+        "active_video_count": active_video_count,
+        "estimated_actions": estimated_actions,
+        "batch_limit": LARGE_LIBRARY_BATCH_LIMIT if large_library_mode else MAX_SELECTED_ACTION_UNITS,
+        "batch_director": batch_director,
+        "selected_units": len(selected_action_units),
     }
     inventory_payload = [
         {"parent": str(parent), "videos": [str(video) for video in videos]}
@@ -1058,8 +1227,21 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         "bundles": bundles,
         "wrapper_actions": wrapper_actions,
         "director_actions": director_actions,
+        "large_library_mode": large_library_mode,
+        "batch_limit": LARGE_LIBRARY_BATCH_LIMIT if large_library_mode else MAX_SELECTED_ACTION_UNITS,
+        "batch_director": batch_director,
     }
-    report["plan_hash"] = _plan_signature(bundles, wrapper_actions, director_actions)
+    report["plan_hash"] = _plan_signature(
+        bundles,
+        wrapper_actions,
+        director_actions,
+        metadata={
+            "large_library_mode": large_library_mode,
+            "batch_limit": report["batch_limit"],
+            "batch_director": batch_director,
+            "summary": summary,
+        },
+    )
 
     if persist:
         _validate_recovery_tree(root)
@@ -1071,6 +1253,7 @@ def make_plan(task_root: str | Path, *, persist: bool = True) -> Dict[str, objec
         report_path.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        _write_large_library_checkpoints(root, report, inventory_payload)
     else:
         report["plan_path"] = ""
     return report
@@ -1210,7 +1393,15 @@ def _plan_integrity_error(plan: Dict[str, object], root: Path) -> Optional[str]:
     if not isinstance(plan_hash, str) or not plan_hash:
         return "plan hash missing"
     if plan_hash != _plan_signature(
-        plan.get("bundles", []), plan.get("wrapper_actions", []), plan.get("director_actions", [])
+        plan.get("bundles", []),
+        plan.get("wrapper_actions", []),
+        plan.get("director_actions", []),
+        metadata={
+            "large_library_mode": plan.get("large_library_mode", False),
+            "batch_limit": plan.get("batch_limit", MAX_SELECTED_ACTION_UNITS),
+            "batch_director": plan.get("batch_director", ""),
+            "summary": plan.get("summary", {}),
+        },
     ):
         return "plan hash mismatch"
     return None
@@ -1798,6 +1989,73 @@ def _write_result(root: Path, mode: str, plan: Dict[str, object], result: Dict[s
     return result_path
 
 
+def seal_plan(plan: Dict[str, object], root: str | Path) -> Dict[str, object]:
+    """Seal one verified large-library naming batch without claiming the task done."""
+
+    root_path = _canonical(root)
+    integrity_error = _plan_integrity_error(plan, root_path)
+    if integrity_error:
+        return {"status": "FAIL", "mode": "seal", "batch_sealed": False, "error_summary": integrity_error}
+    if not _matching_recovery_result(root_path, str(plan.get("plan_hash", "")), mode="verify", dry_run=None):
+        return {
+            "status": "FAIL",
+            "mode": "seal",
+            "batch_sealed": False,
+            "error_summary": "formal naming verify PASS is required before sealing a batch",
+        }
+    verification = verify_plan(plan, root_path)
+    if verification.get("status") != "PASS":
+        return {
+            "status": "FAIL",
+            "mode": "seal",
+            "batch_sealed": False,
+            "error_summary": "fresh naming verify failed before seal: " + str(verification.get("error_summary", "")),
+        }
+    summary = plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}
+    return {
+        "status": "PASS",
+        "mode": "seal",
+        "batch_sealed": True,
+        "large_library_mode": bool(plan.get("large_library_mode")),
+        "plan_hash": plan.get("plan_hash", ""),
+        "next_batch_required": int(summary.get("deferred_action_units", 0) or 0) > 0,
+        "deferred_action_units": int(summary.get("deferred_action_units", 0) or 0),
+        "error_summary": "",
+    }
+
+
+def _write_seal_result(root: Path, plan: Dict[str, object], result: Dict[str, object]) -> Path:
+    _validate_recovery_tree(root)
+    recovery = root / WORK_RECORD_DIR / "recovery"
+    recovery.mkdir(parents=True, exist_ok=True)
+    path = recovery / f"seal-{_timestamp()}.json"
+    record = {
+        "schema": "movie-organizing-preprocessor/seal/v1",
+        "version": VERSION,
+        "mode": "seal",
+        "task_root": str(root),
+        "plan_path": str(plan.get("plan_path", "")),
+        "plan_hash": str(plan.get("plan_hash", "")),
+        **result,
+    }
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if result.get("status") == "PASS":
+        try:
+            _mark_batch_sealed(root, plan, path)
+        except OSError as error:
+            # Keep the on-disk seal record honest if the checkpoint cannot be
+            # updated; a PASS seal must never survive without sealed progress.
+            failed_record = {
+                **record,
+                "status": "FAIL",
+                "batch_sealed": False,
+                "error_summary": f"sealed progress update failed: {error}",
+            }
+            path.write_text(json.dumps(failed_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            raise
+    return path
+
+
 def _cli_summary(report: Dict[str, object]) -> Dict[str, object]:
     bundles = report.get("bundles", [])
     exceptions = [
@@ -1818,7 +2076,7 @@ def _cli_summary(report: Dict[str, object]) -> Dict[str, object]:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="movie-organizing deterministic preprocessor")
-    parser.add_argument("mode", choices=("plan", "apply", "verify"))
+    parser.add_argument("mode", choices=("plan", "apply", "verify", "seal"))
     parser.add_argument("--task-root", required=True)
     parser.add_argument("--plan")
     parser.add_argument("--dry-run", action="store_true")
@@ -1887,6 +2145,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 1
+
+    if args.mode == "seal":
+        result = seal_plan(plan, task_root)
+        result["mode"] = "seal"
+        try:
+            result["result_path"] = str(_write_seal_result(task_root, plan, result))
+        except OSError as error:
+            result.update({"status": "FAIL", "error_summary": f"seal result write failed: {error}"})
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("status") == "PASS" else 1
 
     if args.mode == "apply":
         freshness_error = _fresh_plan_error(plan, task_root)

@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 WORK_RECORD_DIR = "_work-record_"
 RECOVERY_DIR = "recovery"
 PENDING_DIR = "_待确认_"
@@ -61,6 +61,8 @@ REQUIRED_INTEGRITY_PATHS = (
     "scripts/movie_organizing_preprocessor.py",
     "scripts/movie_organizing_slowpath.py",
     "scripts/movie_organizing_task.py",
+    "scripts/movie_organizing_nfo.py",
+    "references/nfo-and-large-library.md",
 )
 
 COMPLETION_BLOCKED = "BLOCKED"
@@ -95,6 +97,16 @@ def _load_preprocessor(skill_dir: Path):
     spec = importlib.util.spec_from_file_location("movie_organizing_preprocessor_for_audit", script)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load preprocessor: {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_nfo(skill_dir: Path):
+    script = skill_dir / "scripts" / "movie_organizing_nfo.py"
+    spec = importlib.util.spec_from_file_location("movie_organizing_nfo_for_audit", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load NFO gate: {script}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -701,6 +713,18 @@ def _base_report(root: Path) -> Dict[str, Any]:
             "candidate_groups": [],
             "candidate_group_count": 0,
         },
+        "nfo_gate": {
+            "status": "NOT_RUN",
+            "counts": {
+                "active_video_units": 0,
+                "active_missing_nfo_files": 0,
+                "active_invalid_nfo_files": 0,
+                "active_nfo_identity_conflicts": 0,
+                "active_nfo_identity_unverified": 0,
+            },
+            "items": [],
+            "item_count": 0,
+        },
         "cleanup_gate": {
             "status": "NOT_RUN",
             "counts": {"active_non_whitelist_items": 0},
@@ -716,6 +740,7 @@ def _base_report(root: Path) -> Dict[str, Any]:
             "core": {},
             "dedupe": {},
             "cleanup": {},
+            "nfo": {},
             "pending_count": 0,
             "pending_video_count": 0,
             "pending_nonvideo_or_empty_units": 0,
@@ -756,7 +781,21 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
             raise RuntimeError(
                 f"preprocessor version mismatch: {getattr(preprocessor, 'VERSION', '')} != {VERSION}"
             )
+        nfo_module = _load_nfo(skill_dir)
+        if str(getattr(nfo_module, "VERSION", "")) != VERSION:
+            raise RuntimeError(
+                f"NFO gate version mismatch: {getattr(nfo_module, 'VERSION', '')} != {VERSION}"
+            )
         plan = preprocessor.make_plan(root)
+        report["large_library_mode"] = bool(
+            plan.get("large_library_mode")
+            or (plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}).get("large_library_mode")
+        )
+        report["batch"] = {
+            "director": plan.get("batch_director", ""),
+            "limit": plan.get("batch_limit", 20),
+            "selected_units": (plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}).get("selected_units", 0),
+        }
         director_violations = _director_violations(root, plan)
         counts, exceptions, actions = _core_counts(plan, director_violations)
         report["plan_path"] = plan.get("plan_path", "")
@@ -784,6 +823,23 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
             report["core_gate"]["reason"] = "TASK_ROOT has no active video units"
 
         if report["core_gate"]["status"] == "PASS":
+            report["nfo_gate"] = nfo_module.audit_nfo_tree(root, plan)
+        else:
+            report["nfo_gate"] = {
+                "status": "NOT_RUN",
+                "counts": {
+                    "active_video_units": 0,
+                    "active_missing_nfo_files": 0,
+                    "active_invalid_nfo_files": 0,
+                    "active_nfo_identity_conflicts": 0,
+                    "active_nfo_identity_unverified": 0,
+                },
+                "items": [],
+                "item_count": 0,
+                "reason": "not evaluated until CORE_GATE=PASS",
+            }
+
+        if report["core_gate"]["status"] == "PASS" and report["nfo_gate"]["status"] == "PASS":
             groups = _candidate_groups(root, plan)
             unresolved = len(groups)
             report["dedupe_gate"] = {
@@ -801,7 +857,8 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
                 "decision_policy": "candidate evidence only; no name/size auto-delete",
             }
         else:
-            # Never scan duplicate groups after a failed CORE gate.
+            # Never scan duplicate groups until both structure and NFO
+            # identity gates pass.
             report["dedupe_gate"] = {
                 "status": "NOT_RUN",
                 "counts": {
@@ -828,19 +885,21 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
             "control_violations": report.get("control_violations", []),
         }
         report["dedupe_gate"]["status"] = "NOT_RUN"
+        report["nfo_gate"]["status"] = "NOT_RUN"
         report["cleanup_gate"]["status"] = "NOT_RUN"
 
     core_pass = report["core_gate"]["status"] == "PASS"
+    nfo_pass = report["nfo_gate"]["status"] == "PASS"
     dedupe_pass = report["dedupe_gate"]["status"] == "PASS"
     cleanup_pass = report["cleanup_gate"]["status"] == "PASS"
-    if not core_pass or not dedupe_pass or not cleanup_pass:
+    if not core_pass or not nfo_pass or not dedupe_pass or not cleanup_pass:
         report["completion_status"] = COMPLETION_BLOCKED
         report["allowed_completion_message"] = BLOCKED_MESSAGE
         exit_code = 1
     elif report["pending_count"]:
         report["completion_status"] = COMPLETION_CORE_PENDING
         report["allowed_completion_message"] = (
-            f"主目录四项核心整理已完成，待确认 {report['pending_count']}项"
+            f"主目录五项核心整理已完成，待确认 {report['pending_count']}项"
         )
         exit_code = 0
     else:
@@ -853,6 +912,7 @@ def audit_task_root(task_root: str | Path) -> Tuple[Dict[str, Any], int]:
         "core": report["core_gate"].get("counts", {}),
         "dedupe": report["dedupe_gate"].get("counts", {}),
         "cleanup": report["cleanup_gate"].get("counts", {}),
+        "nfo": report["nfo_gate"].get("counts", {}),
         "pending_count": report["pending_count"],
         "pending_video_count": report.get("pending_video_count", 0),
         "pending_nonvideo_or_empty_units": report.get("pending_nonvideo_or_empty_units", 0),

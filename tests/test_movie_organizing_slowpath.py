@@ -1,4 +1,4 @@
-"""RED contract tests for the v1.3.5 movie-organizing slow channel.
+"""RED contract tests for the v1.3.6 movie-organizing slow channel.
 
 The slow channel is deliberately tested through its CLI boundary.  Fixtures
 are temporary directories and the audit reports are produced by the existing
@@ -59,7 +59,7 @@ class MovieOrganizingSlowpathTest(unittest.TestCase):
     def _run(self, mode: str, root: Path, *arguments: str) -> tuple[subprocess.CompletedProcess[str], dict]:
         self.assertTrue(
             SLOWPATH_SCRIPT.is_file(),
-            "movie_organizing_slowpath.py is required for the v1.3.5 slow channel",
+            "movie_organizing_slowpath.py is required for the v1.3.6 slow channel",
         )
         process = subprocess.run(
             [
@@ -177,6 +177,42 @@ class MovieOrganizingSlowpathTest(unittest.TestCase):
         )
         return video, subtitle
 
+    def _add_verified_nfo(self, root: Path, video: Path, tmdb_id: int) -> None:
+        """Seed the formal v1.3.6 NFO identity evidence used by dedupe tests."""
+
+        nfo = video.with_suffix(".nfo")
+        nfo.write_text(
+            f'<movie><title>同片</title><originaltitle>Movie</originaltitle>'
+            f'<year>2020</year><uniqueid type="tmdb">{tmdb_id}</uniqueid></movie>',
+            encoding="utf-8",
+        )
+        video_stat = video.stat()
+        lock = {
+            "schema": "movie-organizing-nfo/identity-lock/v1",
+            "version": "1.3.6",
+            "task_root": str(root.resolve()),
+            "plan_hash": f"fixture-{tmdb_id}",
+            "verified_at": "fixture",
+            "locks": [
+                {
+                    "video_path": str(video.resolve()),
+                    "nfo_path": str(nfo.resolve()),
+                    "video_fingerprint": {
+                        "path": str(video.resolve()),
+                        "exists": True,
+                        "size": video_stat.st_size,
+                        "mtime_ns": video_stat.st_mtime_ns,
+                    },
+                    "nfo_sha256": hashlib.sha256(nfo.read_bytes()).hexdigest(),
+                    "tmdb_id": tmdb_id,
+                }
+            ],
+        }
+        self._write_json(
+            root / "_work-record_" / "recovery" / f"nfo-identity-lock-fixture-{tmdb_id}.json",
+            lock,
+        )
+
     def _make_duplicate_fixture(self, root: Path) -> tuple[Path, Path]:
         first = self._make(
             root,
@@ -186,6 +222,8 @@ class MovieOrganizingSlowpathTest(unittest.TestCase):
             root,
             "导演 Director/同片.Movie.2020.1080p.BluRay.x264-HIGH/Movie.2020.1080p.BluRay.x264-HIGH.mkv",
         )
+        self._add_verified_nfo(root, first, 2001)
+        self._add_verified_nfo(root, second, 2002)
         return first, second
 
     def _make_wrong_director_exception_fixture(self, root: Path) -> Path:
@@ -233,7 +271,7 @@ class MovieOrganizingSlowpathTest(unittest.TestCase):
             raise AssertionError(f"unknown dirty fixture kind: {kind}")
         return first, container
 
-    def test_template_extracts_fresh_core_exceptions_and_caps_batch_at_twenty(self):
+    def test_template_extracts_fresh_core_exceptions_and_caps_large_batch_at_five(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._make_core_exception_units(root, count=21)
@@ -249,7 +287,7 @@ class MovieOrganizingSlowpathTest(unittest.TestCase):
                 template["audit_sha256"],
             )
             self.assertGreater(len(template["items"]), 0)
-            self.assertLessEqual(len(template["items"]), 20)
+            self.assertLessEqual(len(template["items"]), 5)
             self.assertTrue(all(item.get("candidate_id") for item in template["items"]))
             self.assertTrue(all(item.get("source") for item in template["items"]))
             unsigned = dict(template)

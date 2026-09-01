@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 AUDIT_SCHEMA = "movie-organizing-audit/v1"
 TEMPLATE_SCHEMA = "movie-organizing-slowpath/template/v1"
 PLAN_SCHEMA = "movie-organizing-slowpath/plan/v1"
@@ -30,11 +30,12 @@ DECISION_SCHEMAS = {
     "movie-organizing-decisions/v1",
 }
 RESULT_SCHEMA = "movie-organizing-slowpath/result/v1"
-AUDIT_VERSION = "1.3.5"
+AUDIT_VERSION = "1.3.6"
 WORK_RECORD_DIR = "_work-record_"
 RECOVERY_DIR = "recovery"
 PENDING_DIR = "_待确认_"
 MAX_ITEMS = 20
+LARGE_MAX_ITEMS = 5
 CORE_PHASE = "core_exception"
 DEDUPE_PHASE = "dedupe"
 ALLOWED_PHASES = {CORE_PHASE, DEDUPE_PHASE}
@@ -301,7 +302,9 @@ def make_template(task_root: str | Path, audit_path: str | Path, phase: str, lim
     if not isinstance(limit, int) or limit < 1 or limit > MAX_ITEMS:
         raise SlowpathError(f"template limit must be between 1 and {MAX_ITEMS}")
     audit_file, audit, audit_hash = _load_audit(root, audit_path)
-    items = _extract_template_items(root, audit, phase)[:limit]
+    large_library_mode = bool(audit.get("large_library_mode"))
+    effective_limit = min(limit, LARGE_MAX_ITEMS) if large_library_mode else limit
+    items = _extract_template_items(root, audit, phase)[:effective_limit]
     payload: Dict[str, Any] = {
         "schema": TEMPLATE_SCHEMA,
         "version": VERSION,
@@ -311,7 +314,8 @@ def make_template(task_root: str | Path, audit_path: str | Path, phase: str, lim
         "audit_sha256": audit_hash,
         "items": items,
         "item_count": len(items),
-        "max_items": MAX_ITEMS,
+        "max_items": effective_limit if large_library_mode else MAX_ITEMS,
+        "large_library_mode": large_library_mode,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
     recovery = _ensure_recovery(root)
@@ -326,7 +330,7 @@ def make_template(task_root: str | Path, audit_path: str | Path, phase: str, lim
         "template_path": str(template_path),
         "template_hash": payload["template_hash"],
         "item_count": len(items),
-        "max_items": MAX_ITEMS,
+        "max_items": effective_limit if large_library_mode else MAX_ITEMS,
         "audit_path": str(audit_file),
         "audit_sha256": audit_hash,
     }
@@ -360,11 +364,13 @@ def _validate_template(root: Path, path: Path, template: Dict[str, Any], audit_p
     without_hash.pop("template_path", None)
     if template_hash != _json_hash(without_hash):
         raise SlowpathError("template hash mismatch")
+    large_library_mode = bool(template.get("large_library_mode"))
+    max_items = LARGE_MAX_ITEMS if large_library_mode else MAX_ITEMS
     items = template.get("items")
     if not isinstance(items, list):
         raise SlowpathError("template items are missing or invalid")
-    if len(items) > MAX_ITEMS:
-        raise SlowpathError(f"template contains more than {MAX_ITEMS} items")
+    if len(items) > max_items:
+        raise SlowpathError(f"template contains more than {max_items} items")
     for index, item in enumerate(items):
         if not isinstance(item, dict):
             raise SlowpathError(f"template item {index} is not an object")

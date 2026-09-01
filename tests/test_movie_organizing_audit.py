@@ -2,6 +2,7 @@ import json
 import hashlib
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -53,6 +54,51 @@ class MovieOrganizingAuditTest(unittest.TestCase):
         self._make(movie_dir, video)
         return movie_dir
 
+    def _add_verified_nfo(self, root: Path, movie_dir: Path, tmdb_id: int) -> None:
+        """Seed formal NFO identity evidence for gates that reach dedupe/cleanup."""
+
+        videos = [item for item in movie_dir.iterdir() if item.is_file() and item.suffix.casefold() == ".mkv"]
+        self.assertEqual(1, len(videos), movie_dir)
+        video = videos[0]
+        year_match = re.search(r"(?<!\d)(19\d{2}|20\d{2})(?=\.|$)", video.stem)
+        self.assertIsNotNone(year_match, video)
+        year = year_match.group(1)
+        original_title = video.stem[: year_match.start()].rstrip(".")
+        nfo = video.with_suffix(".nfo")
+        nfo.write_text(
+            f'<movie><title>{movie_dir.name.split(".", 1)[0]}</title>'
+            f"<originaltitle>{original_title}</originaltitle><year>{year}</year>"
+            f'<uniqueid type="tmdb">{tmdb_id}</uniqueid></movie>',
+            encoding="utf-8",
+        )
+        video_stat = video.stat()
+        lock = {
+            "schema": "movie-organizing-nfo/identity-lock/v1",
+            "version": "1.3.6",
+            "task_root": str(root.resolve()),
+            "plan_hash": f"fixture-{tmdb_id}",
+            "verified_at": "fixture",
+            "locks": [
+                {
+                    "video_path": str(video.resolve()),
+                    "nfo_path": str(nfo.resolve()),
+                    "video_fingerprint": {
+                        "path": str(video.resolve()),
+                        "exists": True,
+                        "size": video_stat.st_size,
+                        "mtime_ns": video_stat.st_mtime_ns,
+                    },
+                    "nfo_sha256": hashlib.sha256(nfo.read_bytes()).hexdigest(),
+                    "tmdb_id": tmdb_id,
+                }
+            ],
+        }
+        recovery = root / "_work-record_" / "recovery"
+        recovery.mkdir(parents=True, exist_ok=True)
+        (recovery / f"nfo-identity-lock-fixture-{tmdb_id}.json").write_text(
+            json.dumps(lock, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
     def test_active_exception_blocks_core_and_completion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -79,6 +125,8 @@ class MovieOrganizingAuditTest(unittest.TestCase):
             second_video = "ferat vampire.1982.1080p.BluRay.x264-RLS.mkv"
             first = self._add_standard_movie(root, "捷克导演 Czech Director", first_folder, first_video)
             second = self._add_standard_movie(root, "捷克导演 Czech Director", second_folder, second_video)
+            self._add_verified_nfo(root, first, 1001)
+            self._add_verified_nfo(root, second, 1002)
 
             process, report = self._audit(root)
 
@@ -110,6 +158,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
                 "费拉特吸血鬼.ferat vampire.1982.1080p.BluRay.x264-RLS",
                 "ferat vampire.1982.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, first, 1001)
             pending_parent = root / "_待确认_" / "捷克导演"
             pending_parent.mkdir(parents=True)
             shutil.move(str(second), str(pending_parent / second.name))
@@ -123,7 +172,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
             self.assertEqual(1, report["pending_count"])
             self.assertEqual("CORE_COMPLETE_PENDING", report["completion_status"])
             self.assertEqual(
-                "主目录四项核心整理已完成，待确认 1项",
+                "主目录五项核心整理已完成，待确认 1项",
                 report["allowed_completion_message"],
             )
             self.assertTrue((root / "捷克导演 Czech Director" / first.name).is_dir())
@@ -131,12 +180,13 @@ class MovieOrganizingAuditTest(unittest.TestCase):
     def test_completion_has_three_states_and_verify_pass_is_naming_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._add_standard_movie(
+            movie = self._add_standard_movie(
                 root,
                 "导演 Director",
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             process, report = self._audit(root)
             self.assertEqual(0, process.returncode)
             self.assertEqual("COMPLETE", report["completion_status"])
@@ -241,6 +291,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             poster = self._make(movie, "poster.jpg", b"poster")
 
             blocked_process, blocked_report = self._audit(root)
@@ -303,12 +354,13 @@ class MovieOrganizingAuditTest(unittest.TestCase):
     def test_cleanup_gate_scans_root_and_director_shallow_entries(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._add_standard_movie(
+            movie = self._add_standard_movie(
                 root,
                 "导演 Director",
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             root_junk = self._make(root, "root-junk.txt", b"junk")
             director_junk = self._make(root / "导演 Director", "director-junk.txt", b"junk")
 
@@ -365,12 +417,13 @@ class MovieOrganizingAuditTest(unittest.TestCase):
     def test_recovery_report_contains_its_own_report_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._add_standard_movie(
+            movie = self._add_standard_movie(
                 root,
                 "导演 Director",
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
 
             process, report = self._audit(root)
 
@@ -410,6 +463,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             expected_video = movie / "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv"
 
             def remove_expected_video(_root, _plan):
@@ -466,6 +520,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
                 "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS",
                 "Standard Movie.2020.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             self._make(root / "导演 Director" / "_待确认_", "hidden.mkv")
             self._make(root / "导演 Director" / "_trash_nested", "hidden.mkv")
             self._make(movie / "_work-record_", "hidden.mkv")
@@ -549,12 +604,13 @@ class MovieOrganizingAuditTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._add_standard_movie(
+            movie = self._add_standard_movie(
                 root,
                 "爱德嘉·莱兹 Edgar Reitz",
                 "影.Original Movie.1949.1080p.BluRay.x264-RLS",
                 "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             process, report = self._audit(root)
             self.assertEqual(0, process.returncode)
             self.assertEqual("PASS", report["core_gate"]["status"])
@@ -582,12 +638,13 @@ class MovieOrganizingAuditTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self._add_standard_movie(
+            movie = self._add_standard_movie(
                 root,
                 "爱德嘉·莱兹 Edgar Reitz",
                 "影.Original Movie.1949.1080p.BluRay.x264-RLS",
                 "Original Movie.1949.1080p.BluRay.x264-RLS.mkv",
             )
+            self._add_verified_nfo(root, movie, 1001)
             process, report = self._audit(root)
             self.assertEqual(0, process.returncode)
             self.assertEqual("PASS", report["core_gate"]["status"])
@@ -605,6 +662,7 @@ class MovieOrganizingAuditTest(unittest.TestCase):
             # the director root; cleanup must not silently treat them as done.
             flattened = root / "导演 Director" / "标准片.Standard Movie.2020.1080p.BluRay.x264-RLS"
             movie.rename(flattened)
+            self._add_verified_nfo(root, flattened, 1001)
 
             process, report = self._audit(root)
             self.assertNotEqual(0, process.returncode)

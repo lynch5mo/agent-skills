@@ -140,6 +140,21 @@
 - 通过：异常项隔离且其余条目闭环。
 - 未通过：若升级为系统性阻塞，任务停止并等待决策。
 
+## B15 NFO 身份与大库批次
+
+- 触发：TMDb 候选为 0/多个、标题/年份/导演或已有 NFO ID 冲突，API/ffprobe/解析失败，NFO
+  缺失/损坏，identity-lock 缺失或指纹漂移；或大库批次超过单导演/10 项边界。
+- 禁止：Agent 手写 XML、猜 ID、仅凭旧 NFO 标签通过，跳过 dry-run/verify/seal，或把
+  `progress.json` 当完成证据。
+- 处理：由 `movie_organizing_nfo.py` 生成计划；唯一匹配才写同 stem NFO，其他 `PENDING_*`
+  在同一事务以 `pending_isolation` 将完整电影夹可逆移至当前
+  `TASK_ROOT/_待确认_/原导演路径/`，记录 source/target/tree hash/evidence/rollback。目标
+  冲突、symlink、树漂移、部分执行或验证失败则 STOP；隔离完成后 fresh audit，继续下一个
+  有界批次。大库命名每批必须 `plan → dry-run → apply → verify → seal`，seal 仅接受正式
+  verify PASS。
+- 通过：NFO XML/数据库 ID/stem、identity-lock 和隔离目标均经脚本 verify；active NFO_GATE
+  计数全为零，批次 checkpoint 与 recovery 可追溯。
+
 ## Bxx 未知故障
 
 - 触发：规则库外新故障。

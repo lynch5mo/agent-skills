@@ -33,6 +33,7 @@ FIXED_STEPS = (
     "preprocess",
     "exception_resolution",
     "core_gate",
+    "nfo_gate",
     "dedupe_gate",
     "cleanup_final_audit",
 )
@@ -154,7 +155,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
         path = root / "_work-record_" / "recovery" / name
         payload = {
             "schema": "movie-organizing-audit/v1",
-            "version": "1.3.5",
+            "version": "1.3.6",
             "task_root": str(root.resolve()),
             "report_path": str(path),
             "status": "PASS" if completion_status != "BLOCKED" else "FAIL",
@@ -188,7 +189,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
     ) -> Path:
         base = {
             "schema": schema,
-            "version": "1.3.5",
+            "version": "1.3.6",
             "task_root": str(root.resolve()),
         }
         base.update(payload)
@@ -206,10 +207,10 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
             deferred = [item for item in bundles if item.get("selected_for_apply") is False]
 
             self.assertEqual(25, summary["action_required"])
-            self.assertEqual(20, summary.get("selected_action_units"), summary)
-            self.assertEqual(5, summary.get("deferred_action_units"), summary)
-            self.assertEqual(20, len(selected))
-            self.assertEqual(5, len(deferred))
+            self.assertEqual(10, summary.get("selected_action_units"), summary)
+            self.assertEqual(15, summary.get("deferred_action_units"), summary)
+            self.assertEqual(10, len(selected))
+            self.assertEqual(15, len(deferred))
             self.assertTrue(all(item["status"] == "ACTION_REQUIRED" for item in deferred))
             self.assertEqual(
                 summary["planned_actions"],
@@ -465,7 +466,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
             with mock.patch.object(TASK_MODULE, "_prerequisites", return_value=(True, "")):
                 payload = TASK_MODULE.task_state(root, mode="start")
 
-            self.assertEqual("1.3.5", payload["version"])
+            self.assertEqual("1.3.6", payload["version"])
             self.assertEqual("inventory", payload["phase"])
             self._assert_full_next_command(payload, "plan", "--task-root", str(root.resolve()))
 
@@ -522,7 +523,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-naming.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "naming-plan",
@@ -548,7 +549,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-apply-dry.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "apply",
                     "dry_run": True,
                     "status": "PASS",
@@ -573,7 +574,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-apply-formal.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "apply",
                     "dry_run": False,
                     "status": "PASS",
@@ -591,7 +592,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-verify.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "verify",
                     "status": "PASS",
                     "task_root": str(root.resolve()),
@@ -611,7 +612,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-batch.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "batch-plan",
@@ -624,7 +625,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-verify-batch.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "verify",
                     "status": "PASS",
                     "task_root": str(root.resolve()),
@@ -644,7 +645,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-old.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "same-plan",
@@ -657,7 +658,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-verify-old.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "verify",
                     "status": "PASS",
                     "task_root": str(root.resolve()),
@@ -670,7 +671,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-fresh-from-audit.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "same-plan",
@@ -899,7 +900,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-naming.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "naming-plan",
@@ -912,7 +913,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-verify-naming.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "verify",
                     "status": "PASS",
                     "task_root": str(root.resolve()),
@@ -973,7 +974,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                     "plan-current.json",
                     {
                         "schema": "movie-organizing-preprocessor/v1",
-                        "version": "1.3.5",
+                        "version": "1.3.6",
                         "plan_kind": "naming",
                         "task_root": str(root.resolve()),
                         "plan_hash": "current-plan",
@@ -986,7 +987,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                     "result-current-fail.json",
                     {
                         "schema": "movie-organizing-preprocessor/result/v1",
-                        "version": "1.3.5",
+                        "version": "1.3.6",
                         "mode": "apply",
                         "dry_run": False,
                         "status": "FAIL",
@@ -1014,7 +1015,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                     "result-verify-fail.json",
                     {
                         "schema": "movie-organizing-preprocessor/result/v1",
-                        "version": "1.3.5",
+                        "version": "1.3.6",
                         "mode": "verify",
                         "status": "FAIL",
                         "task_root": str(root.resolve()),
@@ -1040,7 +1041,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "result-manual-fail.json",
                 {
                     "schema": "movie-organizing-preprocessor/result/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "mode": "apply",
                     "dry_run": False,
                     "status": "FAIL",
@@ -1057,7 +1058,7 @@ class MovieOrganizingWorkflowContractTest(unittest.TestCase):
                 "plan-newer.json",
                 {
                     "schema": "movie-organizing-preprocessor/v1",
-                    "version": "1.3.5",
+                    "version": "1.3.6",
                     "plan_kind": "naming",
                     "task_root": str(root.resolve()),
                     "plan_hash": "new-plan",

@@ -1,4 +1,4 @@
 interface:
   display_name: "Movie Organizing"
-  short_description: "四项核心门禁：命名、孤立建夹、导演归类、质量去重"
-  default_prompt: "Use $movie-organizing only inside the user-provided TASK_ROOT. Start with scripts/movie_organizing_task.py start, then follow its fixed next_allowed command; after any compaction run status first. Do not hand-write filesystem actions or plans."
+  short_description: "硬流程：命名、建夹归类、TMDb NFO 身份门禁、质量去重与大库批次"
+  default_prompt: "Use $movie-organizing only inside the user-provided TASK_ROOT. Start with scripts/movie_organizing_task.py start, then follow its fixed next_allowed command; after any compaction run status first. Run the official NFO gate after CORE and isolate unresolved units under TASK_ROOT/_待确认_. Never hand-write filesystem actions, NFO XML, IDs, or plans."
