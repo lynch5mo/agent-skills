@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "alpha-ficc-chart-generation-spec-v1",
+  "title": "美国利率与美元指数",
+  "window": "3Y",
+  "granularity": "M",
+  "workspace": {
+    "id": "agent-generated-macro",
+    "activeEngine": "echarts",
+    "chartMode": "absolute",
+    "panels": [
+      {"id": "rate-panel", "title": "美国10年期国债收益率", "heightWeight": 1, "kind": "macro"},
+      {"id": "dollar-panel", "title": "名义广义美元指数", "heightWeight": 1, "kind": "macro"}
+    ],
+    "objects": [
+      {
+        "id": "rate-line",
+        "sourceId": "fred:DGS10",
+        "sourceType": "series",
+        "panelId": "rate-panel",
+        "label": "美国10年期国债收益率",
+        "unit": "%",
+        "visible": true,
+        "color": "#2563eb",
+        "lineStyle": "solid",
+        "lineWidth": 2,
+        "axisSide": "left"
+      },
+      {
+        "id": "dollar-line",
+        "sourceId": "fred:DTWEXBGS",
+        "sourceType": "series",
+        "panelId": "dollar-panel",
+        "label": "名义广义美元指数",
+        "unit": "指数",
+        "visible": true,
+        "color": "#16a34a",
+        "lineStyle": "dashed",
+        "lineWidth": 2,
+        "axisSide": "right"
+      }
+    ],
+    "annotations": [],
+    "timeWindow": {"preset": "3Y", "granularity": "M"},
+    "interactionSettings": {"xRange": 100, "xOffset": 100, "heightScale": 100, "widthScale": 100}
+  }
+}

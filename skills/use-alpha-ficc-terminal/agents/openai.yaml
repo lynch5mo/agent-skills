@@ -1,4 +1,4 @@
 interface:
   display_name: "Use Alpha-FICC Terminal"
-  short_description: "Alpha-FICC terminal and KB loop"
-  default_prompt: "Use $use-alpha-ficc-terminal to retrieve Agent-KB knowledge, build an observation model, fetch Alpha-FICC terminal data, push chart actions, and verify the action ledger."
+  short_description: "Alpha-FICC 图表图片生成、当前图取图、聊天附图与终端研究"
+  default_prompt: "使用 $use-alpha-ficc-terminal，根据需求选择 chart-image 显式生成或当前图快照，复用程序已有保存图片功能并在聊天中附图；终端研究和网页图表动作按任务需要执行。"
