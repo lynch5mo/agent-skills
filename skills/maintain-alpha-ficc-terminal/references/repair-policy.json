@@ -1,0 +1,400 @@
+{
+  "a1_actions": {
+    "refresh_daily": [
+      "bash",
+      "scripts/run_incremental_refresh_cron.sh",
+      "daily"
+    ],
+    "refresh_low_frequency": [
+      "bash",
+      "scripts/run_incremental_refresh_cron.sh",
+      "low-frequency"
+    ],
+    "refresh_catchup": [
+      "bash",
+      "scripts/run_incremental_refresh_cron.sh",
+      "catchup"
+    ],
+    "restart_api": [
+      "docker",
+      "restart",
+      "alpha-ficc-api"
+    ],
+    "restart_web": [
+      "docker",
+      "restart",
+      "alpha-ficc-web"
+    ],
+    "restart_hermes_relay": [
+      "docker",
+      "restart",
+      "alpha-ficc-hermes-relay"
+    ]
+  },
+  "a1_executor": {
+    "version": "a1-v1",
+    "timeout_seconds": 60,
+    "post_action_check_ids": {
+      "refresh_daily": [
+        "refresh.health",
+        "data_catalog.series"
+      ],
+      "refresh_low_frequency": [
+        "refresh.health",
+        "refresh.low_frequency",
+        "data_catalog.series"
+      ],
+      "refresh_catchup": [
+        "refresh.health",
+        "data_catalog.series"
+      ],
+      "restart_api": [
+        "api.health",
+        "data_catalog.series"
+      ],
+      "restart_web": [
+        "api.health"
+      ],
+      "restart_hermes_relay": [
+        "api.health"
+      ]
+    }
+  },
+  "a1_executables": {
+    "bash": {
+      "path": "/bin/bash"
+    },
+    "docker": {
+      "path": "/usr/bin/docker"
+    }
+  },
+  "a2_allowed_production_globs": [
+    "services/data/*_provider.py",
+    "services/data_refresh/*.py"
+  ],
+  "a2_allowed_test_globs": [
+    "tests/test_*provider.py",
+    "tests/test_data_refresh_incremental.py"
+  ],
+  "forbidden_globs": [
+    "scripts/api_server.py",
+    "services/persistence/**",
+    "db/migrations/**",
+    "apps/web/**",
+    "docker-compose*.yml",
+    "requirements*.txt",
+    "package*.json"
+  ],
+    "a2_candidate_gate": {
+        "version": 1,
+        "evidence": {
+            "source": "privileged_immutable_verifier",
+            "caller_supplied_red_green": false,
+            "junit_format": "xunit-v1",
+            "max_bytes": 32768,
+            "requires_runner_identity": true,
+            "requires_immutable_image_digest": true,
+            "requires_network_none": true,
+            "requires_read_only_rootfs": true,
+            "requires_cap_drop_all": true,
+            "requires_no_new_privileges": true
+        },
+    "diff_input": {
+      "source": "git diff --name-status",
+      "accepted_statuses": [
+        "M"
+      ],
+      "rejected_status_prefixes": [
+        "A",
+        "D",
+        "R",
+        "C",
+        "T",
+        "U",
+        "X",
+        "B"
+      ],
+      "reject_submodules": true,
+      "reject_binary": true
+    },
+    "canonical_path": {
+      "format": "repo_relative_posix",
+      "reject_absolute": true,
+      "reject_empty_segments": true,
+      "reject_segments": [
+        ".",
+        ".."
+      ],
+      "separator": "/"
+    },
+    "base_entry": {
+      "must_be_tracked": true,
+      "git_object_type": "blob",
+      "git_modes": [
+        "100644",
+        "100755"
+      ]
+    },
+    "source_clone_entry": {
+      "lstat_type": "regular_file",
+      "hardlink_count": 1,
+      "reject_symlink_leaf": true,
+      "reject_symlink_components": true,
+      "realpath_must_be_within_clone": true
+    },
+    "matcher": {
+      "engine": "segment_aware_glob_v1",
+      "star_matches_separator": false,
+      "double_star_matches_segments": true,
+      "decision": "allowlist_match_and_no_forbidden_match"
+    },
+    "negative_test_vectors": [
+      {
+        "id": "absolute_path",
+        "input": {
+          "diff_status": "M",
+          "path": "/services/data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "non_canonical_path"
+      },
+      {
+        "id": "empty_segment",
+        "input": {
+          "diff_status": "M",
+          "path": "services//data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "non_canonical_path"
+      },
+      {
+        "id": "dot_segment",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/./rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "non_canonical_path"
+      },
+      {
+        "id": "traversal",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/../persistence/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "non_canonical_path"
+      },
+      {
+        "id": "nested_allowlist_path",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/nested/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "allowlist_miss"
+      },
+      {
+        "id": "symlink_parent",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/rogue_provider.py",
+          "symlink_component": true
+        },
+        "decision": "reject",
+        "reason": "symlink_component"
+      },
+      {
+        "id": "symlink_leaf",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/rogue_provider.py",
+          "symlink_leaf": true
+        },
+        "decision": "reject",
+        "reason": "not_regular_single_link_file"
+      },
+      {
+        "id": "rename",
+        "input": {
+          "diff_status": "R100",
+          "path": "services/data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "unsupported_diff_status"
+      },
+      {
+        "id": "copy",
+        "input": {
+          "diff_status": "C100",
+          "path": "services/data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "unsupported_diff_status"
+      },
+      {
+        "id": "typechange",
+        "input": {
+          "diff_status": "T",
+          "path": "services/data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "unsupported_diff_status"
+      },
+      {
+        "id": "delete",
+        "input": {
+          "diff_status": "D",
+          "path": "services/data/rogue_provider.py"
+        },
+        "decision": "reject",
+        "reason": "unsupported_diff_status"
+      },
+      {
+        "id": "untracked_generated",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/generated_provider.py",
+          "base_tracked": false
+        },
+        "decision": "reject",
+        "reason": "not_tracked_at_base"
+      },
+      {
+        "id": "submodule",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/rogue_provider.py",
+          "git_mode": "160000"
+        },
+        "decision": "reject",
+        "reason": "submodule"
+      },
+      {
+        "id": "binary",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/rogue_provider.py",
+          "binary": true
+        },
+        "decision": "reject",
+        "reason": "binary"
+      },
+      {
+        "id": "forbidden_match",
+        "input": {
+          "diff_status": "M",
+          "path": "scripts/api_server.py"
+        },
+        "decision": "reject",
+        "reason": "forbidden_match"
+      }
+    ],
+    "positive_test_vectors": [
+      {
+        "id": "tracked_provider",
+        "input": {
+          "diff_status": "M",
+          "path": "services/data/fred_provider.py"
+        },
+        "decision": "allow_production"
+      },
+      {
+        "id": "tracked_provider_test",
+        "input": {
+          "diff_status": "M",
+          "path": "tests/test_fred_provider.py"
+        },
+        "decision": "allow_test"
+      }
+    ]
+  },
+    "limits": {
+    "max_repair_classes_per_run": 1,
+    "max_a1_actions_per_run": 1,
+    "max_a2_commits": 1,
+    "max_a2_production_files": 1,
+    "max_a2_test_files": 1,
+    "max_a2_changed_files": 2,
+        "max_a2_changed_lines": 120,
+        "max_a2_file_bytes": 2097152,
+        "max_a2_total_bytes": 4194304,
+        "max_a2_json_bytes": 131072,
+        "max_a2_junit_bytes": 32768,
+        "max_a2_command_output_bytes": 32768,
+        "max_a2_verifier_seconds": 300,
+        "max_a2_build_seconds": 600,
+        "max_a2_health_seconds": 60,
+        "max_a2_journal_records": 64,
+    "probe_deadline_seconds": 100,
+    "per_http_timeout_seconds": 5,
+    "max_command_output_bytes": 16384,
+    "confirmation_attempts": 2,
+    "confirmation_delay_seconds_min": 60,
+    "confirmation_delay_seconds_max": 180,
+    "confirmation_check_budget_seconds": 25,
+        "reporting_reserve_seconds": 60
+    },
+    "a2_control_plane": {
+        "version": 2,
+        "canonical_remote": "git@github.com:lynch5mo/alpha-ficc.git",
+        "canonical_protocol": "ssh",
+        "canonical_ref": "main",
+        "required_object_oid": "lowercase_full_oid_for_object_format",
+        "forbidden_git_metadata": [
+            "refs/replace",
+            "info/grafts",
+            "objects/info/alternates",
+            "commondir",
+            "shallow",
+            "remote_helpers",
+            "unexpected_local_config"
+        ],
+        "verifier_sandbox": {
+            "network": "none",
+            "rootfs": "read-only",
+            "source_mounts": "read-only",
+            "docker_socket": false,
+            "host_secrets": false,
+            "cap_drop": ["ALL"],
+            "no_new_privileges": true,
+            "non_root": true,
+            "cpu_limit": "locked",
+            "memory_limit": "locked",
+            "pids_limit": "locked",
+            "hard_timeout": true
+        },
+        "delta_image": {
+            "context": "/var/lib/alpha-ficc-maintainer/a2/deployments/<deployment-id>/build-context",
+            "allowed_payload": "one_production_100644_python_file",
+            "generated_dockerfile": "FROM_and_COPY_only",
+            "network": "none",
+            "source_clone": false,
+            "production_root": false,
+            "test_file": false,
+            "full_candidate_tree": false,
+            "build_secrets": false
+        },
+        "journal_states": [
+            "prepared",
+            "bundle_ready",
+            "image_built",
+            "files_applying",
+            "container_switching",
+            "verifying",
+            "publishing",
+            "committed",
+            "rolling_back",
+            "rollback_failed"
+        ],
+        "rollback": {
+            "before_live_fetch_or_gate": true,
+            "authorization": "external_0600_hmac_bound_to_lease_and_deployment",
+            "source_required": false,
+            "remote_required": false,
+            "replay_rejected": true,
+            "traversal_rejected": true,
+            "head_written_last": true
+        }
+    }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "维护 Alpha-FICC 终端"
+  short_description: "为 Hermes 提供受限、可追溯的 Alpha-FICC 维护边界"
+  default_prompt: "使用 $maintain-alpha-ficc-terminal 运行一轮有界 Alpha-FICC 维护，并返回待投递的中文维修报告。"
