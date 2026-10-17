@@ -1,18 +1,21 @@
 ---
 name: movie-folder-rename-cleanup
 description: >-
-  电影库批量规范化：命名规范置顶（中文名.英文 Name.年份...），先完成电影夹与视频
-  文件名规范化，再做 NFO/字幕配对、夹内净化，最后结构整理；垃圾进 _trash_ 回收站
-  不直接删。
+  处理明确限定范围的电影夹或视频改名、旁车名称对齐与获准的夹内清理。
+  完整电影库整理使用 movie-organizing；只读咨询或仅补缺失 NFO 不触发改名。
 license: MIT
 metadata:
   version: "3.0"
   author: lynch5mo
   tags: [media, rename, cleanup, movie-library, ffprobe, naming-convention]
-  trigger: User asks to batch-rename movie folders/files to a standard naming convention, clean up non-video junk inside movie folders, promote subtitles from subfolders to the movie folder root, or normalize a director-based movie library (e.g. /Volumes/115open/Media/Movie/<洲>/).
+  trigger: 用户明确要求限定范围的改名、旁车对齐或夹内清理；完整整理转交 movie-organizing，不叠加写入口。
 ---
 
 # Movie Folder Rename & Cleanup Skill
+
+## 适用边界
+
+本 Skill 用于明确授权的窄范围命名或旁车对齐。完整电影库整理以 `movie-organizing` 为主入口，不同时使用两套写入流程或绕过其门禁。仅补缺失 NFO、只读盘点或整理咨询不进入本改名流程。已锁定范围与命名标准可沿用；身份不明、目标冲突或范围变化时停止相关写入。
 
 ## ⭐ 第一部分：命名规范（一切操作的基础，2026-08-24 定版）
 

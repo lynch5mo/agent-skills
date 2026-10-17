@@ -89,9 +89,10 @@ curl -sL "https://news.google.com/rss/search?q=关键词&hl=en-US&gl=US&ceid=US:
 - Compiled knowledge (source material): `wiki/summaries/<domain>/`
 
 ## Git Workflow
-After writing:
+仅在用户要求同步时提交和推送；文章草稿交付本身不授权全库暂存。使用目标文件白名单并遵循项目提交约定：
 ```bash
-cd /Users/lynch5mo/Documents/LLM/agent-kb
-git add -A && git commit -m "descriptive message"
-git push origin main
+cd "/Users/lynch5mo/Work Documents/LLM/agent-kb"
+git status --short --branch
+# 按本任务实际文件逐个暂存，检查 staged diff 后再提交；不使用 git add -A。
+# 仅在同步已授权时推送。
 ```

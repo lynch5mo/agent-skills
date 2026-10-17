@@ -1,6 +1,6 @@
 ---
 name: fupeng-models-charting
-description: Pull financial data from OpenBB FRED + akshare and chart Fupeng's (付鹏) core research models — real rate vs gold, CN-US spread vs FX, yield curve vs equities. Supports both PNG and terminal (plotext) output.
+description: 用户明确要求离线复现付鹏研究图表时参考；操作 Alpha-FICC 在线终端应使用 use-alpha-ficc-terminal 的 scoped 接口，不执行本文旧 provider 示例。
 license: MIT
 metadata:
   version: "1.0.0"
@@ -11,6 +11,8 @@ metadata:
 
 # Fupeng Core Models — Financial Charting Pipeline
 
+本文 provider 调用是历史离线示例，需在获准的本地开发环境核实当前接口；不得用于绕过 Alpha-FICC Agent 的 token、scope 或数据接口边界。路径更新不表示这些历史 API 已通过当前版本验证。
+
 ## Data Sources
 
 | Region | Source | Method |
@@ -18,13 +20,13 @@ metadata:
 | US (TIPS, Treasuries) | OpenBB → FRED | `dp.fetch("tips10y")`, `dp.fetch_dynamic_fred("DGS10")` |
 | China (bonds, gold, FX) | akshare | `ak.bond_zh_us_rate()`, `ak.spot_golden_benchmark_sge()` |
 
-**Critical**: OpenBB registry only has 47 series. Chinese bond/gold/FX data MUST come from akshare. DO NOT try to get CN data from OpenBB/FRED — it's not there.
+历史示例使用 OpenBB/FRED 与 akshare；系列数量和可用来源以当前 registry 为准，不将历史的 47 条系列计数当成现状。
 
 ## OpenBB DataProvider Usage
 
 ```python
 import sys
-sys.path.insert(0, '/Users/lynch5mo/Documents/OpenBB')
+sys.path.insert(0, '/Users/lynch5mo/Work Documents/alpha-ficc')
 from services.data.series_registry import SeriesRegistry
 from services.data.provider import DataProvider
 

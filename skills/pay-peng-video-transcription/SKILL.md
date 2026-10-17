@@ -1,6 +1,6 @@
 ---
 name: pay-peng-video-transcription
-description: End-to-end pipeline for transcribing 付鹏 (Pay Peng) series audio/video content with Whisper, producing aligned transcripts and Markdown documents.
+description: 将明确指定的付鹏系列音视频转录为对齐文本和 Markdown；仅转录不自动扩展为知识库编译、发布或持续监控。
 license: MIT
 metadata:
   version: "1.0.0"
@@ -110,7 +110,7 @@ python3 ops/scripts/convert_transcripts_to_md.py
 
 ## 后台运行最佳实践
 
-视频批量数量大（688 个，~98GB），建议用 Hermes background 启动 + cron 监控模式：
+历史批次较大时可使用后台转录；只有用户明确要求持续监控时才配置 cron。下面是历史批次示例，不能据此扩大本次范围或自动启动监控：
 
 ```bash
 # 1. 创建 runner 脚本
@@ -119,7 +119,7 @@ cat > /tmp/whisper_video_runner.sh << 'RUNEOF'
 cd /Volumes/lynch5mo-pool/agent-kb/browse/agent-kb/raw/inbox/付鹏系列/
 export PYTHONUNBUFFERED=1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting video transcription batch" >> whisper_video_batch.log
-python3 /Users/lynch5mo/Documents/LLM/agent-kb/ops/scripts/transcribe_video.py --model small >> whisper_video_batch.log 2>&1
+python3 "/Users/lynch5mo/Work Documents/LLM/agent-kb/ops/scripts/transcribe_video.py" --model small >> whisper_video_batch.log 2>&1
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Batch completed" >> whisper_video_batch.log
 RUNEOF
 chmod +x /tmp/whisper_video_runner.sh
@@ -166,7 +166,7 @@ find /Volumes/lynch5mo-pool/.../付鹏系列/transcripts_md/ -name "*.md" | wc -
 | **ID 提取混乱** | `【123】标题`、`付鹏说123`、`标题【123】`、纯日期前缀、无编号等 | 多策略 fallback：1) 匹配 `【\d+】` 或 `[【\[](\d+)[】\]]` 2) 匹配 `付鹏说\s*(\d+)` 3) hash(title) 生成 6 位十六进制 ID |
 | **标题污染** | 大量推广文本：`【更多精品课程请加微信xxx】`、`（添加微信xxx送福利）`、`- 华尔街见闻` | 用简单字符串操作（非 regex）循环清除，避免中文特殊字符在 regex 中的编译问题 |
 | **文件名碰撞** | 不同来源的相同标题生成相同文件名 | 命名格式：`标题-ID.md`，确保唯一性 |
-| **路径陷阱** | NAS `browse/agent-kb/` 是工作副本，不是知识库 | 编译输出必须写到 `/Users/lynch5mo/Documents/LLM/agent-kb/wiki/summaries/finance/` |
+| **路径陷阱** | NAS 是源对象存储，macOS 是编译工作区 | 获批编译写入 `/Users/lynch5mo/Work Documents/LLM/agent-kb/wiki/summaries/finance/`；仅转录不自动编译 |
 
 ### 5.3 编译脚本核心逻辑（Python）
 
@@ -175,7 +175,7 @@ import os, re
 from datetime import datetime
 
 nas_base = "/Volumes/lynch5mo-pool/agent-kb/browse/agent-kb/raw/inbox/付鹏系列"
-wiki_output = "/Users/lynch5mo/Documents/LLM/agent-kb/wiki/summaries/finance"
+wiki_output = "/Users/lynch5mo/Work Documents/LLM/agent-kb/wiki/summaries/finance"
 
 # 1. 收集所有素材（跳过 transcripts_ 子目录的深层遍历）
 items_by_title = {}

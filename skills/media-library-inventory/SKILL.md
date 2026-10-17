@@ -28,9 +28,9 @@ metadata:
 
 ### 1. Define Scope
 
-Identify the target root directory(ies) and subdirectory structure. Confirm the output directory path with the user.
+Identify the authorized target roots and subdirectories from the current request and existing context. Use the user's output path, or choose a dedicated directory in the current task workspace and report it. Ask only if the target scope is missing or materially ambiguous.
 
-**Convention:** create a dedicated output dir like `/Users/lynch5mo/Work Documents/LLM/<project-name>-<YYYYMMDD>/`.
+**Convention:** use a dedicated task-local output directory; do not create an unrelated cross-project report location.
 
 ### 2. Collect Raw File Listings (Phase 1)
 
@@ -210,7 +210,7 @@ Write a single Python script that:
 - **Target isolation directory:** `_review/duplicates/OP-<date>-<batch-name>/` under the media root
 - **Keep original relative path structure** at the target — same directory tree under the review dir
 - **Priority ordering:** by file size descending (largest dup = highest priority)
-- **Batch size:** move only first N groups (default 5) per batch, let user confirm before next batch
+- **Batch size:** move only first N groups (default 5) per batch. If the full scope and plan are authorized, verify each batch and continue without repeated approval. Stop for drift, conflicts, failed verification, or a material scope/risk change
 - **Phase A / Phase B separation:** When the user finds that existing records (e.g. moved-manifest.csv) have incorrect `new_path` values (wrong prefix, missing `_review/duplicates/OP-<id>/`), address Phase A (record correction) **before** Phase B (new moves). Run a dedicated script that reads each record, verifies the live filesystem state, and rewrites the column. Do NOT move new data until records are correct — mixing corrections and moves in one batch invites confusion.
 - **new_path must NOT equal old_path:** The `new_path` column in moved-manifest.csv records where the file was moved TO — always `_review/duplicates/OP-<id>/<relative_path>`. If it matches `old_path`, the record is wrong. Correct by prepending the review prefix.
 - **Record-keeping discipline:** Between batches, generate `moved-manifest.csv` (source→target mapping for ALL moved groups so far) and `operation-log.md` (chronological timeline with timestamps, group IDs, sizes, and verification status) before proceeding to the next batch. If the user notes records are missing, fill them from current file state before moving any new data.
@@ -219,7 +219,7 @@ Write a single Python script that:
 
 #### d. Execute
 
-After generating the plan and confirming with the user:
+After generating a concrete plan and establishing authorization (reuse existing authorization for the unchanged scope):
 
 1. Create target base directory at `_review/duplicates/OP-<date>-<batch-name>/`
 2. Create parent dirs at target (mirror relative path)

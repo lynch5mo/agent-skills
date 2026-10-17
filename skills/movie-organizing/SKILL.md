@@ -1,14 +1,14 @@
 ---
 name: movie-organizing
 description: >-
-  Use when a user asks an assistant to normalize, rehome, enrich, or deduplicate
-  a mixed movie library within an explicitly bounded TASK_ROOT.
+  用户明确要求在已限定 TASK_ROOT 内完整整理电影库（命名、归类、身份与去重门禁）时使用。
+  仅补缺失 NFO、只读盘点、整理咨询或讨论本 Skill 时不自动进入完整流程。
 license: MIT
 metadata:
   version: "1.3.6"
   author: lynch5mo
   tags: [media, movie-library, batch-plan, nfo]
-  trigger: User asks to normalize, rehome, enrich NFO, deduplicate, or quality-select a movie library.
+  trigger: 用户授权完整电影库整理；仅补缺失 NFO 或只读咨询不触发十步写入流程。
 ---
 
 # Movie Organizing v1.3.6
@@ -17,6 +17,10 @@ metadata:
 提供的脚本产生；Agent 只锁定范围、读取命名合同、提交语义决定和复核 JSON。
 
 ## 不可违反的硬规则
+
+本手册及下方固定步骤适用于完整整理。已明确的 TASK_ROOT 与授权可从同一任务上下文沿用，无需重复询问；不允许自行扩大范围。
+
+严格 NFO-only（已有 NFO 不读不改、仅补缺失）不进入本控制器。当前 NFO 计划会读取已有 NFO 并依赖命名预处理，不能将其宣传为满足这一限制的独立入口。没有符合约束的既有工具时，报告具体能力缺口并保留清单；不得为了使用本流程而增加改名、去重、移动或清理，也不得手工绕过门禁。
 
 - `TASK_ROOT` 必须由用户明确给出并锁定；不得升到父目录、跨国家或跨任务根。
 - 每次开始、恢复或上下文压缩后先运行 `movie_organizing_task.py status`，只执行 JSON
@@ -34,7 +38,7 @@ metadata:
   完整电影夹保留导演路径后可逆隔离。目标冲突、symlink、漂移或隔离未验证时停止，不能猜名。
 - 正式 apply/verify 失败由脚本自动回滚；回滚失败必须报告 `manual_recovery_required`。
 
-## 十步固定流程（不可跳步）
+## 完整整理的十步固定流程（进入后不可跳步）
 
 `movie_organizing_task.py` 是唯一控制面；它返回完整步骤和唯一下一条允许命令：
 
