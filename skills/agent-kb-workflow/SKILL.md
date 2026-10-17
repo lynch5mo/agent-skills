@@ -1,9 +1,9 @@
 ---
 name: agent-kb-workflow
-description: "Use when an Agent works in agent-kb, manages Obsidian graph/indexing, closes reports across Codex, Claude, or Hermes devices, ingests or queries knowledge, or handles courses, books, reading, lessons, study progress, transcripts, or learning recovery."
+description: "仅用于 canonical Agent-KB 中的查询、入库、对象学习、图谱策略或报告归档；普通书籍问答、阅读、翻译和转录不因题材自动触发。"
 license: MIT
 metadata:
-  version: "1.6.0"
+  version: "1.9.0"
   author: Hermes Agent
   platforms: [linux, macos, windows, android]
   hermes:
@@ -24,7 +24,11 @@ Layer 3: Research cognition (Model Card → Parameter → Playbook → Compariso
 Layer 4: Learning control (course/reading preprocessing → progress → review)
 ```
 
-### Key Rules (Apply to ALL Phases)
+### 按当前任务选择流程
+
+只读查询只读取相关对象和必要约定，不自动 pull、生成报告、更新学习进度或执行提交推送。写入、入库、归档和同步步骤仅在本次授权范围内执行；仅要求转录、翻译或回答问题，不附加知识编译。相同版本已读资料及有效验证结果可复用，输入变化后再检查。
+
+### Key Rules (Apply to the relevant write/intake phase)
 - NAS stores, Agent machine compiles
 - Learning intake source of truth is the NAS browse root:
   - courses: `/mnt/lynch5mo-pool/agent-kb/browse/agent-kb/raw/courses/`
@@ -35,7 +39,7 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 - Keep lightweight preprocessing, Markdown conversations, progress, and every object-specific question, analysis, map, and extension under the same object path in Git
 - Store generated bodies under object `assets/`; `assets/manifest.yaml` is the single asset manifest
 - Never maintain a second asset body under NAS `artifacts/`, `write/assets/learning/`, `write/drafts/learning/`, or `outputs/qa/learning/`
-- Validate object assets, verify `sha256`, update the single manifest and real learning progress, then commit and push
+- For authorized object writes, validate assets and the manifest; update learning progress only from real user interaction. Commit and push only when synchronization is in scope
 - Never announce completion before evidence
 - All seed objects must have real sources
 - Series ID is the canonical bridge between KB and workstation
@@ -56,7 +60,7 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 
 ## Cross-Device Agent Report Closeout
 
-Read `schema/AGENT_RULES.md`, `schema/agent_report_contract.md`, and `ops/agents/instance-registry.json` before closing any substantive Agent-KB task. The repository contract is authoritative if this Skill and the checkout ever differ.
+Read `schema/AGENT_RULES.md` and the task-relevant contract when writing Agent-KB. Read `schema/agent_report_contract.md` and `ops/agents/instance-registry.json` only when creating a managed report; reuse them while the checkout is unchanged. Plain read-only queries do not enter report closeout. The repository contract is authoritative for repository operations.
 
 ### Clone-local identities
 
@@ -69,6 +73,11 @@ Read `schema/AGENT_RULES.md`, `schema/agent_report_contract.md`, and `ops/agents
 | `Codex` | `codex-ubuntu-desktop` | Ubuntu | `agentkb.codexInstance` |
 | `Claude` | `claude-code-mac` | macOS | `agentkb.claudeInstance` |
 | `Claude` | `claude-code-ubuntu-desktop` | Ubuntu | `agentkb.claudeInstance` |
+| `Pi` | `pi-mac` | macOS | `agentkb.piInstance` |
+| `Pi` | `pi-ubuntu-desktop` | Ubuntu | `agentkb.piInstance` |
+| `DeepSeekHarness` | `deepseek-harness-mac` | macOS | `agentkb.deepseekHarnessInstance` |
+| `DeepSeekHarness` | `deepseek-harness-ubuntu-desktop` | Ubuntu | `agentkb.deepseekHarnessInstance` |
+| `DeepSeekHarness` | `deepseek-harness-android-mobile` | Android | `agentkb.deepseekHarnessInstance` |
 
 Bind an instance from inside the actual clone, then validate the canonical family name:
 
@@ -77,9 +86,15 @@ python3 ops/scripts/configure_agent_instance.py set <instance_id>
 python3 ops/scripts/configure_agent_instance.py check Hermes
 python3 ops/scripts/configure_agent_instance.py check Codex
 python3 ops/scripts/configure_agent_instance.py check Claude
+python3 ops/scripts/configure_agent_instance.py check Pi
+python3 ops/scripts/configure_agent_instance.py check DeepSeekHarness
 ```
 
 Claude Code uses the canonical family `Claude`, never `ClaudeCode`. Identity lives only in that clone's `.git/config`; a new clone must bind again. Do not infer identity from hostname, username, IP, or device serial.
+
+Pi uses the canonical family `Pi` and lowercase instance ids `pi-mac` / `pi-ubuntu-desktop`. The macOS and Ubuntu Pi are separate devices: each writes only its own instance directory and never writes for the other.
+
+DeepSeek Harness uses the canonical family `DeepSeekHarness` and lowercase instance ids `deepseek-harness-mac` / `deepseek-harness-ubuntu-desktop` / `deepseek-harness-android-mobile`. The three devices are separate: each writes only its own instance directory and never writes for the others.
 
 ### Durable report paths
 
@@ -90,7 +105,7 @@ outputs/review/agent_task_summaries/<agent_family>/<instance_id>/TASK-<task-id>.
 outputs/review/agent_activity/<agent_family>/<instance_id>/YYYY-MM-DD.md
 ```
 
-Use the safe closeout entrypoint:
+When report commit and synchronization are authorized, use the safe closeout entrypoint (it writes, commits and pushes; it is not a read-only verification command):
 
 ```bash
 bash ops/scripts/agent_finish.sh <agent_family> TASK-<task-id> <summary-file.md>
@@ -99,6 +114,31 @@ bash ops/scripts/agent_finish.sh <agent_family> TASK-<task-id> <summary-file.md>
 It validates identity, injects `agent-report-v1` frontmatter, stages only the summary and activity record, commits, and pushes. Existing staged work blocks closeout; unrelated unstaged work stays untouched. A failed push preserves the local commit and returns `sync_pending`.
 
 Historical root-level reports are immutable legacy. `ops/agents/legacy-report-baseline.json` is the exact allowlist: do not migrate old reports, invent device provenance, add new root-level reports, or expand the baseline during ordinary work.
+
+### `outputs/` admission (hard)
+
+`outputs/` is a run-artifact layer with a **closed directory list**. Agents must not create directories there. A missing slot is a contract change, not a local decision.
+
+Allowed top level, only these five: `health/`, `planning/`, `qa/`, `recovery/`, `review/`.
+
+Allowed under `outputs/review/`, only these five: `agent_task_summaries/`, `agent_activity/`, `film/`, `movie-library/`, `user_summaries/`.
+
+Allowed under `outputs/qa/`, only this one: `learning/`.
+
+Task-scoped evidence and review files live **flat** in `outputs/review/`, prefixed with the task id:
+
+```text
+outputs/review/TASK-<task-id>-<name>.md
+outputs/review/TASK-<task-id>-<name>.json
+```
+
+No per-task subdirectories. Article workspaces, conversation backups and per-task lifecycle logs are **not** sanctioned as directories: prose goes to `write/drafts/`, raw dialogue to `raw/conversations/`, task lifecycle traces follow the flat `TASK-<id>` rule, and other intermediates stay out of Git.
+
+Never treat "not covered by `.gitignore`" as evidence of admissibility. `.gitignore` decides what syncs; it never decides what may exist.
+
+Need a new directory? Amend `schema/AGENT_RULES.md` §2.2 and get owner approval **first**, then write. The contract states this explicitly: a gap is fixed in the contract, never by creating the directory and explaining afterwards.
+
+Enforcement: `outputs_structure_violations` in the lint report must be 0. It walks `outputs/` → `outputs/review/` → `outputs/qa/`. Any other directory, or a stray file directly under `outputs/`, is a P1 finding.
 
 ### Git and Obsidian are separate boundaries
 
