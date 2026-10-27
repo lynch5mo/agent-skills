@@ -41,6 +41,7 @@ Layer 4: Learning control (course/reading preprocessing → progress → review)
 - Never maintain a second asset body under NAS `artifacts/`, `write/assets/learning/`, `write/drafts/learning/`, or `outputs/qa/learning/`
 - For authorized object writes, validate assets and the manifest; update learning progress only from real user interaction. Commit and push only when synchronization is in scope
 - Never announce completion before evidence
+- Local commit is not completion: push to `origin/main`, then require `git rev-list --count origin/main..HEAD` to be 0 and `git status --porcelain` to be empty; if push fails, mark `sync_pending` and report the task as incomplete
 - Dates and timestamps come from `python3 ops/scripts/kb_date.py` (shell: `KB_TIME_TZ="$(python3 ops/scripts/kb_date.py tzname)"` then `export TZ="$KB_TIME_TZ"`, assignment and export kept separate); never bare `date` or `datetime.now()`. Record timezone and epochs live in `schema/kb-timezone.yaml`
 - All seed objects must have real sources
 - Series ID is the canonical bridge between KB and workstation
