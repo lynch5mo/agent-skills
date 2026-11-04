@@ -21,6 +21,17 @@ FILE_FIELDS = ("path", "expected_size", "sha256", "required_sections")
 SHA256_RE = re.compile(r"[0-9a-fA-F]{64}")
 
 
+def section_present(section, text):
+    """`A|B` passes when a `## A` or `## B` heading exists (Agent-KB treats
+    Chinese and English summary headings as equivalent); a plain name keeps
+    the original substring check."""
+    if "|" not in section:
+        return section in text
+    names = [name.strip() for name in section.split("|") if name.strip()]
+    lines = {line.strip() for line in text.splitlines()}
+    return any(f"## {name}" in lines for name in names)
+
+
 class UsageError(Exception):
     pass
 
@@ -192,7 +203,7 @@ def verify_items(root, items, max_samples):
         missing_sections = [
             section
             for section in item["required_sections"]
-            if section not in text
+            if not section_present(section, text)
         ]
         if missing_sections:
             counts["section_mismatch"] += 1

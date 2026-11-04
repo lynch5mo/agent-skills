@@ -17,7 +17,7 @@ Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via
 ### Step 1: Title Filter → Generate Manifest
 - List all source files in the inbox directory
 - **Deduplicate source files**: check for Re-Upload vs original (compare file sizes, keep larger/revised)
-- Create `raw/manifests/series-manifest-<series-name>.md`
+- Create `raw/manifests/<YYYY-MM>/series-manifest-<series-name>.md` (monthly folder, `schema/AGENT_RULES.md` §6)
 - Manifest structure: table with `#`, `Title`, `Format`, `Size`, `Status`
 - Flag known duplicates and document the keep/discard decision
 
@@ -28,7 +28,8 @@ Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via
 - **IMPORTANT**: If the user already stated the domain in their original request, respect it — do not ask again. Just confirm and proceed.
 
 ### Step 3: Wait for Classification Approval
-- User confirms in chat → write approval file at `raw/manifests/classification-approval-<task-id>.md`
+- If every source sits under an `active` rule in `schema/source-preapproval.yaml` (智堡, 付鹏系列, Zoltan Pozsar → finance) and the ingest classifier agrees, ingest writes the approval file itself (`approved_by: preapproval`); skip to Step 4
+- Otherwise the user confirms in chat → write approval file at `raw/manifests/<YYYY-MM>/classification-approval-<task-id>.md`
 - Approval file format:
   ```yaml
   ---
@@ -52,26 +53,29 @@ Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via
    - **HTML → MD**: extract rich_media_content, preserve image positions relative to text
    - **TSV → MD**: keep text column only
 2. Run the ingest pipeline: one source item → one summary page
-3. Summary page path: `wiki/summaries/<domain>/<canonical_title>-<numeric_id>.md`
-4. Every summary must have fixed sections: `摘要`, `要点`, `实体`, `概念`, `原文摘录`
+3. Summary page path: `wiki/summaries/<domain>/<file name>`, file name per `schema/AGENT_RULES.md` §5 (numeric source ID if the source has one, else a 6-char source-path hash; ingest computes it)
+4. Every summary has the five sections; Chinese and English headings are equivalent (`摘要|Summary`, `要点|Key Points`, `实体|Entities`, `概念|Concepts`, `原文摘录|Raw Excerpt`, `schema/AGENT_RULES.md` §4)
+5. Frontmatter carries `sources`, `updated_at`, `domain`, `original_title`, `canonical_title`, `title_filter_mode`; add `valid_as_of` for finance when the publish date is known
+6. Summary and Key Points never contain platform promotion lines (membership, subscription, disclaimers)
 
 ### Step 6: Concept Linking
-- Must use `[[wiki/concepts/<domain>/<concept>|<concept>]]` wiki-link format
+- Use relative Markdown links, e.g. `[收益率曲线](../../concepts/finance/收益率曲线.md)` (`schema/AGENT_RULES.md` §4 item 6); lint checks them for broken targets
 - Code format `` `概念` `` is prohibited
-- Only create independent entity/concept pages when reuse threshold is met: referenced by ≥5 summary pages
+- Independent entity/concept pages follow the single threshold table in `schema/AGENT_RULES.md` §4.2 (3–4 summaries: candidate only; ≥5: page)
 
 ### Step 7: Navigation / Lint
-- Update domain map at `wiki/maps/<domain>.md`
-- Run lint checks: broken links, missing pages, orphaned summaries
-- Verify three zero-metrics: `pages_not_reachable_from_index=0`, `summaries_missing_from_domain_map=0`, `broken_summary_links=0`
+- Ingest rebuilds `wiki/maps/<domain>.md`, and for domains over 300 summaries the generated topic maps under `wiki/maps/<domain>/` (`schema/AGENT_RULES.md` §9)
+- Run `bash ops/scripts/openclaw_lint.sh <task-id> <agent> <title> <description>`; it exits 3 when this batch introduced contract violations
+- Require every core metric in `schema/lint_contract.md` §4 to be 0, including `new_violations`
 
 ### Step 8: Verify + Closeout
-1. Verify the manifest count, per-file SHA-256, and required sections (`摘要`, `要点`, `实体`, `概念`, `原文摘录`) before treating the batch as complete
-2. Run lint checks and confirm the three zero-metrics are still zero
-3. `git add` all changed files
-4. `git commit -m "<series-name>: <domain> series compilation — N files"`
-5. `git push origin main`
-6. Report: commit hash, verified file count, lint results, known gaps
+1. Verify the manifest count, per-file SHA-256, and required sections (`摘要|Summary`, `要点|Key Points`, `实体|Entities`, `概念|Concepts`, `原文摘录|Raw Excerpt`) before treating the batch as complete
+2. Run lint and confirm all core metrics, including `new_violations`, are still zero
+3. Ingest already writes the wiki log entry; add one with `python3 ops/scripts/kb_wiki_log.py append <kind> <task-id> <agent> <message>` only for wiki changes made outside ingest
+4. `git add` all changed files
+5. `git commit -m "<series-name>: <domain> series compilation — N files"`
+6. `git push origin main`
+7. Report: commit hash, verified file count, lint results, known gaps
 
 ---
 
@@ -89,7 +93,7 @@ Extracted & enriched from agent-kb-workflow Phase 9. Load this file directly via
 - No writing to `wiki/` without approval
 - No large files in Git main repo (>50MB)
 - No 6th top-level domain
-- No code format for concepts (use `[[wiki-links]]`, not `` `backtick` ``)
+- No code format for concepts (use relative Markdown links, `schema/AGENT_RULES.md` §4 item 6)
 - No bypassing the classification approval step
 - No creating entity/concept pages below reuse threshold (5 summary references)
 
@@ -210,11 +214,13 @@ Minimal manifest schema:
       "path": "wiki/summaries/knowledge/Game-Theory-01-0001.md",
       "expected_size": 2048,
       "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-      "required_sections": ["摘要", "要点", "实体", "概念", "原文摘录"]
+      "required_sections": ["摘要|Summary", "要点|Key Points", "实体|Entities", "概念|Concepts", "原文摘录|Raw Excerpt"]
     }
   ]
 }
 ```
+
+A required section written as `A|B` passes when either `## A` or `## B` is present (Chinese and English headings are equivalent). A plain name keeps the old substring check.
 
 Expected `size`/`sha256` are computed independently from the intended payload or source manifest before the final write; the verifier never derives the acceptance hash from the written file.
 
@@ -222,6 +228,6 @@ Expected `size`/`sha256` are computed independently from the intended payload or
 1. `scripts/verify_output_batch.py` exits 0 against the expected manifest; the manifest lists every expected item and the actual item count matches
 2. Every written file matches the independently precomputed expected SHA-256 (or a verified chunk ledger plus required sections)
 3. Every summary contains all required sections
-4. Lint three zero-metrics remain zero
+4. Lint core metrics, including `new_violations`, remain zero
 5. Git status shows exactly the intended files; unrelated user changes are untouched
 6. Only then commit, push, and report completion

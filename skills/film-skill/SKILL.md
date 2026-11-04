@@ -3,7 +3,7 @@ name: film-skill
 description: Operate screenplay projects inside the canonical Agent-KB safely, including source intake and formal import for Scrivener .scriv projects, PDF, DOCX, Word, old outlines, old drafts, and reference screenplays; scene-unit audits; screenplay-format checks; turning user outlines into structured scene breakdowns and screenplay drafts; deconstructing old drafts for iterative revision; and analyzing reference screenplays for craft patterns. Use when Codex needs to inspect, diagnose, summarize, validate, create AI task/report artifacts, build screenplay assets, or draft/revise under write/film without modifying source scenes before explicit user approval.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   author: lynch5mo
 ---
 

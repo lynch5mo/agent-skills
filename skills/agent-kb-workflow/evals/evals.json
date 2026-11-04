@@ -66,6 +66,36 @@
       "prompt": "写一篇很长的课程总结时 write_file 中途超时了，我现在该怎么办？",
       "expected_output": "把超时视为未知写入状态，不当作成功也不当作必然失败；先检查目标文件，若已匹配独立预计算的 expected size/SHA-256 就不再重写，不匹配时用原子替换或只恢复缺失/损坏 chunk；无法预计算时维护含 chunk_id/offset/expected-size/hash 的分片 ledger 并校验必需节；只重试失败片，避免 append 重试重复，验证完整后再继续。",
       "files": []
+    },
+    {
+      "id": 12,
+      "prompt": "刚入库的一批付鹏系列文章，lint 报 new_violations=3 并以退出码 3 结束，但核心指标都是 0。可以先提交吗？",
+      "expected_output": "不能。new_violations 必须为 0（schema/AGENT_RULES.md §10、lint_contract.md §4）；按报告 New Violations 小节逐条修正本批页面（常见为缺 frontmatter 标题字段、缺章节、文件名缺源 ID、摘要含宣传语）后重跑 lint，不得放宽或删除检查。historical_backlog 不拦截。",
+      "files": []
+    },
+    {
+      "id": 13,
+      "prompt": "智堡新来了 20 篇 PDF，要不要先让我写审批文件？",
+      "expected_output": "不需要逐批签字：智堡在 schema/source-preapproval.yaml 中是 active 规则（→ finance），全部材料命中且分类器判为 finance 时，ingest 自动在 raw/manifests/<YYYY-MM>/ 生成 approved_by: preapproval 的审批文件；任何一份未命中、分类不一致或低置信度，整批回到人工审批。Agent 不得自行改预批准规则。",
+      "files": []
+    },
+    {
+      "id": 14,
+      "prompt": "同一篇文章出现了两个摘要页：一个文件名带 736057，一个不带。怎么处理？",
+      "expected_output": "按 schema/AGENT_RULES.md §5 第 4 条：同一源文件只留一页，保留带数字 ID 的；被合并页中保留页没有的原文片段写入保留页的 ## 补充摘录，合并 sources/实体/概念，删除被合并页并改写 wiki/ 与 write/ 中的全部链接；批量合并先写 proposal 获批，可用 migrate_legacy_summaries.py dedupe 先 dry-run。",
+      "files": []
+    },
+    {
+      "id": 15,
+      "prompt": "这个扫描版 PDF 抽出来全是乱码，摘要也是乱码，要不要先把乱码写进原文摘录占位？",
+      "expected_output": "不要写入乱码。页面标记 review_status: needs-ocr 和 quality_flag: garbled-source-text（schema/AGENT_RULES.md §8 第 3 条），记入 OCR 队列；拿到 OCR 文本或可读版本后放在原文旁，用 migrate_legacy_summaries.py excerpt 回填，再重新生成摘要并去掉标记。",
+      "files": []
+    },
+    {
+      "id": 16,
+      "prompt": "摘要里的概念要用 [[收益率曲线]] 还是 Markdown 链接？",
+      "expected_output": "用相对路径 Markdown 链接，如 [收益率曲线](../../concepts/finance/收益率曲线.md)（schema/AGENT_RULES.md §4 第 6 条），这是 ingest 生成、lint 检查断链的格式；不得用代码格式。",
+      "files": []
     }
   ]
 }

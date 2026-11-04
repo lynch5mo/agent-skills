@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "仅用于 canonical Agent-KB 中的查询、入库、对象学习、图谱策略或报告归档；普通书籍问答、阅读、翻译和转录不因题材自动触发。"
 license: MIT
 metadata:
-  version: "1.11.0"
+  version: "1.12.0"
   author: Hermes Agent
   platforms: [linux, macos, windows, android]
   hermes:
@@ -35,11 +35,14 @@ This Skill says how to work; it does not own the rules. Every "must / never" rul
 Repository rules you will hit most often (read the cited section, do not rely on this summary):
 - Summary page format — 5 sections with equivalent Chinese/English headings, required frontmatter, no promotion lines in Summary/Key Points: `schema/AGENT_RULES.md` §4, §8
 - File naming and duplicate pages — numeric source ID, else 6-char source hash; one summary per source: `schema/AGENT_RULES.md` §5
+- Entity/concept links in summaries — relative Markdown links, never code backticks: `schema/AGENT_RULES.md` §4 item 6
 - Concept/entity page thresholds — one table only: `schema/AGENT_RULES.md` §4.2
 - Classification approval — monthly path `raw/manifests/<YYYY-MM>/`, pre-approval via `schema/source-preapproval.yaml`: `schema/AGENT_RULES.md` §7
 - Large-domain navigation through generated topic maps: `schema/AGENT_RULES.md` §9; `ops/scripts/kb_topic_maps.py`
 - Wiki change log — only wiki-changing events, monthly files, via `python3 ops/scripts/kb_wiki_log.py append ...`: `schema/AGENT_RULES.md` §11
 - Lint — `new_violations` must be 0 (lint exits 3 otherwise); legacy backlog does not block: `schema/lint_contract.md` §4–§6
+- Unreadable sources — mark `review_status: needs-ocr` + `quality_flag: garbled-source-text`: `schema/AGENT_RULES.md` §8 item 3
+- Rule changes — record every `schema/` change in `schema/CHANGELOG.md`; `schema/source-preapproval.yaml` changes need lynch5mo's approval: `schema/AGENT_RULES.md` §0, §7
 
 Workflow reminders:
 - NAS stores, Agent machine compiles
@@ -57,8 +60,8 @@ Workflow reminders:
 - Local commit is not completion: push to `origin/main`, then require `git rev-list --count origin/main..HEAD` to be 0 and `git status --porcelain` to be empty; if push fails, mark `sync_pending` and report the task as incomplete
 - All seed objects must have real sources
 - Series ID is the canonical bridge between KB and workstation
-- Concept links MUST use `[[...]]` wiki-link format (code format `` `概念` `` is prohibited)
-- Never write to wiki/ without user approval
+- Concept and entity links use the relative Markdown form the ingest script writes, e.g. `[收益率曲线](../../concepts/finance/收益率曲线.md)`; lint checks these for broken targets. Code format `` `概念` `` is prohibited
+- Never write to wiki/ without approval: a classification approval file (user-written, or generated from an `active` rule in `schema/source-preapproval.yaml`) for ingest, or an approved proposal for refactor/promotion
 - Course and reading tasks use this existing Skill; do not create a competing learning Skill
 - Chinese sources pass through without translation; English content becomes Chinese working material in preprocessing
 - Record date and time come from `schema/kb-timezone.yaml` through `python3 ops/scripts/kb_date.py date|ts|tzname`, never from the host clock. Current `record_tz` is `America/New_York` (epoch `e2`); files written under `e1` used `Asia/Shanghai`, and the boundary lives in that yaml. Never hardcode `TZ=Asia/Shanghai` or a `-04:00` / `-05:00` offset — New York shifts twice a year. When a shell script needs it, put `KB_TIME_TZ="$(python3 ops/scripts/kb_date.py tzname)"` and `export TZ="$KB_TIME_TZ"` on separate lines so a failed substitution is not swallowed
@@ -184,7 +187,12 @@ Enforcement: `outputs_structure_violations` in the lint report must be 0. It wal
 - Durable reports remain Git-tracked so other Agents and devices receive them.
 - `ops/obsidian/index-policy.json` excludes all of `outputs/` and `write/` from Obsidian search and graph indexing.
 - After pull or policy changes, run `bash ops/scripts/sync_obsidian_graph.sh` and then `bash ops/scripts/sync_obsidian_graph.sh --check`.
-- If stale report nodes remain, run `Rebuild vault cache` from the Obsidian command palette, not from the shell.
+- If stale nodes remain, rebuild the vault cache. In Settings → Files and links → Rebuild vault cache, or, when Obsidian is running on this machine, from the shell with the Obsidian CLI:
+  ```bash
+  obsidian vault=agent-kb eval code="app.metadataCache.clear().then(()=>'cleared')"
+  obsidian vault=agent-kb command id=app:reload
+  ```
+  Confirm afterwards that no cached path is missing from the vault: `obsidian vault=agent-kb eval code="app.metadataCache.getCachedFiles().filter(p=>!app.vault.getAbstractFileByPath(p)).length"` must print 0. Obsidian may re-save `.obsidian/app.json` without its trailing newline; that is not a semantic change, so restore it with `git checkout -- .obsidian/app.json`.
 - On Android shared storage, the active Vault may be `/storage/emulated/0/agent-kb`; verify the real Vault and Git root before pulling.
 
 ---
@@ -205,7 +213,9 @@ Two modes: **incremental** (new files only) and **full rebuild** (reprocess all,
 - OCR text cleaning: remove inter-character spaces, platform headers, ads
 
 ### Batch Import (48-PDF verified)
-Preprocess → batch create approval files + execute ingest → clean duplicates → update domain map → lint + git push.
+Preprocess → approval (sources under an `active` rule in `schema/source-preapproval.yaml` are approved automatically by ingest; everything else needs a user-written approval file) → execute ingest → confirm one summary per source → domain/topic maps are rebuilt by ingest → lint (`new_violations` 0) → git push.
+
+PDFs whose text cannot be extracted (scans, broken font encoding) must not produce a garbage summary: OCR first, or mark the page `needs-ocr` (`schema/AGENT_RULES.md` §8 item 3).
 
 ### NAS Sync
 Remote inbox from TrueNAS (`192.168.10.32`) via SSH/SCP.
@@ -216,20 +226,17 @@ Full content archived at `agent-kb-pdf-ingestion-workflow`.
 
 ## Phase 2: Deduplication (was `agent-kb-summary-dedupe`)
 
-### Pattern Recognition
-- Pattern 1: `{base}.md` vs `{base}-2.md` (enhanced with PDF metadata) — candidates for dedup
-- Pattern 2: Date/sequence numbers — NOT duplicates
-
-### Collision Types
-- **A**: True duplicate
-- **B**: Same title, different source
-- **C**: Same source, different pipeline
-- **D**: Same title, different numeric ID
-
-**Rule**: `-N` suffix files are NOT always duplicates. Blind deletion can lose valid content.
+The rule is `schema/AGENT_RULES.md` §5 item 4: one summary per source document. Duplicates are identified by **source**, not by title: two pages are duplicates when their `sources` resolve to the same document (a PDF and its `_prepared_md/` copy count as one). Same title with a different source is not a duplicate.
 
 ### Process
-Detect → analyze sizes → verify difference → create dedup script → execute → verify → report → commit+push → lint.
+1. Detect: lint `summaries_duplicate_source`, or `python3 ops/scripts/migrate_legacy_summaries.py dedupe --report <path>` (dry run by default).
+2. Keep the page whose file name carries the source's numeric ID; otherwise the one with an excerpt and full frontmatter.
+3. Lines of the dropped page's excerpt that the kept page lacks go into `## 补充摘录`; sources, entities and concepts are unioned.
+4. Delete the dropped page and rewrite every link in `wiki/` and `write/` (the script does both with `--apply`).
+5. Batch merges need an approved proposal first (`schema/refactor_contract.md`).
+6. Lint, then commit and push.
+
+Date or sequence numbers in names (`-2`, `【19】 220107`) are not IDs; only hyphen-joined 6–8 digit source numbers are (`kb_summary_rules.source_numeric_id`).
 
 Full content archived at `agent-kb-summary-dedupe`.
 
@@ -295,7 +302,7 @@ Build standardized concept links and concept pages for domains with summaries bu
 ### Process
 1. Build term dictionary (canonical → aliases per domain)
 2. Domain-wide scan and count
-3. Update Concepts block with standardized `[[...]]` wiki-links
+3. Update the Concepts block with relative Markdown links to the canonical concept pages (`schema/AGENT_RULES.md` §4 item 6)
 4. Create concept pages only at the reuse threshold in `schema/AGENT_RULES.md` §4.2 (3–4 summaries: candidate list; ≥5: page)
 5. Update domain map
 
@@ -305,7 +312,7 @@ Full content archived at `agent-kb-domain-concept-linking`.
 
 ## Phase 7: Domain Map Fix (was `agent-kb-fix-domain-maps`)
 
-Fix domain maps auto-indexing for two-hop reachability: `index.md → domain_map.md → summary.md`.
+Navigation is `index.md → domain map → [topic map] → summary` (`schema/AGENT_RULES.md` §9). A domain with more than 300 summaries lists only generated topic maps under `wiki/maps/<domain>/`; never hand-edit them. Rebuild with `python3 ops/scripts/kb_topic_maps.py rebuild --domain <domain>` (ingest does this automatically).
 
 ### Critical Discovery
 When filenames contain `)`, `]`, `(`, `[`, standard markdown regex truncates link targets. **Must use angle-bracket format**: `[text](<target>)`.
@@ -314,7 +321,7 @@ When filenames contain `)`, `]`, `(`, `[`, standard markdown regex truncates lin
 `summary_slugs_from_map()` and `find_links()` must support angle-bracket format.
 
 ### Expected Outcome
-Three metrics all zero: `pages_not_reachable_from_index=0`, `summaries_missing_from_domain_map=0`, `broken_summary_links=0`.
+All core lint metrics in `schema/lint_contract.md` §4 are 0, including `pages_not_reachable_from_index`, `summaries_missing_from_domain_map`, `broken_summary_links` and `new_violations`.
 
 Full content archived at `agent-kb-fix-domain-maps`.
 
@@ -366,9 +373,9 @@ Complete SOP for compiling large text series (e.g., 付鹏系列, Game Theory se
 4. **Precheck → readability, dedup** (MD5 hash: IDENTICAL/SIMILAR/DIFFERENT)
 5. **Compile (summary-first)**
    - **SRT → MD**: strip timestamps, place in `<domain>/` or `_prepared_md/`
-   - One source → one summary at `wiki/summaries/<domain>/<title>-<id>.md`
-6. **Concept Linking** → `[[concepts/finance/概念|概念]]` wiki-link format (not code backticks)
-7. **Navigation/Lint → update maps, check three zero-metrics**
+   - One source → one summary; file name per `schema/AGENT_RULES.md` §5 (numeric source ID, else 6-char source hash — the ingest script computes it)
+6. **Concept Linking** → relative Markdown links `[概念](../../concepts/<domain>/概念.md)` (not code backticks)
+7. **Navigation/Lint → maps are rebuilt by ingest; lint core metrics 0 and `new_violations` 0**
 8. **Verify → Closeout**: run `python3 scripts/verify_output_batch.py --manifest <expected-manifest.json> --root "$PWD"` and require exit 0; manual counts, hashes, and required-section checks are fallback. Confirm lint zero-metrics, then git commit + push
 
 ### Dedup Rules
@@ -382,7 +389,7 @@ SRT → MD (strip timestamps and sequence numbers), HTML → MD (extract rich_me
 - No writing to wiki/ without approval
 - No large files in Git main repo
 - No 6th top-level domain
-- No code format for concepts (use `[[wiki-links]]`)
+- No code format for concepts (use relative Markdown links)
 - No skipping the classification approval step
 - No entity/concept pages below reuse threshold (≥5 summaries)
 
@@ -411,6 +418,18 @@ Synthesize an author's complete research framework from auto-compiled wiki summa
 Truncated auto-compiled summaries are still useful — opening paragraphs contain thesis, concept links reflect full text, titles are rich. Triangulate title + concept links + summary text.
 
 Full content archived at `agent-kb-author-framework-synthesis`.
+
+---
+
+## Phase 10.5: Legacy Migration and OCR Backfill
+
+Use when lint reports `historical_backlog`, or when the user supplies readable versions (OCR text or text PDFs) of sources whose pages are marked `needs-ocr`.
+
+- Tool: `python3 ops/scripts/migrate_legacy_summaries.py <step> [--apply] --report <path>`; steps `dedupe`, `rename-id`, `frontmatter`, `residue`, `boilerplate`, `excerpt`. Always dry-run first and read the report.
+- OCR queue: `outputs/review/TASK-20261103-KB-RULES-REVIEW-ocr-queue.md` maps each `needs-ocr` page to its source.
+- OCR backfill: put the readable text next to the original as `<same name>.md` or `.txt`, run the `excerpt` step, regenerate the Summary / Key Points from the readable text, then remove `review_status: needs-ocr` and `quality_flag`.
+- The `excerpt` step rejects garbled extraction (readability check) instead of writing it; never paste unreadable text into a page.
+- Deleting or merging pages, or lowering a backlog by relaxing a check, needs an approved proposal (`outputs/planning/refactor-proposal-*.md`).
 
 ---
 
