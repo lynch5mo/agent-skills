@@ -299,6 +299,7 @@ For imported reference scripts, use a separate project or task scope. The source
 - `references/report-types.md`: report and rewrite output types.
 - `references/worldbuilding-methodology.md`: Q1–Q5 worldbuilding framework — define a world's logic before writing characters or scenes.
 - `references/permission-boundary.md`: read/write boundaries and forbidden operations.
+- `references/agent-kb-film-intake.md`: Agent-KB film intake routing, Chinese screenplay format pitfall, project scaffolding, card asset pipeline and scene-drafting priority (moved from `agent-kb-workflow`).
 
 ## Templates
 
