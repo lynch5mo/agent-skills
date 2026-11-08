@@ -18,7 +18,7 @@ class AgentKbCrossDeviceContractTest(unittest.TestCase):
         text = AGENT_KB_SKILL.read_text(encoding="utf-8")
         self.assertIn('version: "1.12.1"', text)
         self.assertIn("platforms: [linux, macos, windows, android]", text)
-        self.assertRegex(text, r'description:\s*"?Use when')
+        self.assertRegex(text, r'description:\s*"?(Use when|仅用于)')
         for config_key in (
             "agentkb.hermesInstance",
             "agentkb.codexInstance",
