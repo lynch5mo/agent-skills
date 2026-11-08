@@ -16,7 +16,7 @@ MANIFEST = ROOT / "manifest.json"
 class AgentKbCrossDeviceContractTest(unittest.TestCase):
     def test_agent_kb_skill_covers_managed_families_and_seven_instances(self):
         text = AGENT_KB_SKILL.read_text(encoding="utf-8")
-        self.assertIn('version: "1.6.0"', text)
+        self.assertIn('version: "1.12.1"', text)
         self.assertIn("platforms: [linux, macos, windows, android]", text)
         self.assertRegex(text, r'description:\s*"?Use when')
         for config_key in (
@@ -122,7 +122,7 @@ class AgentKbCrossDeviceContractTest(unittest.TestCase):
     def test_manifest_versions_match_updated_skills(self):
         payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
         versions = {item["name"]: item["version"] for item in payload["skills"]}
-        self.assertEqual("1.6.0", versions["agent-kb-workflow"])
+        self.assertEqual("1.12.1", versions["agent-kb-workflow"])
         self.assertEqual("1.1.0", versions["android-obsidian-self-hosted-git"])
 
     def test_skill_packages_match_complete_source_directories(self):

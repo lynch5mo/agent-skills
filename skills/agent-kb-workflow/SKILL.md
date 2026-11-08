@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "仅用于 canonical Agent-KB 中的查询、入库、对象学习、图谱策略或报告归档；普通书籍问答、阅读、翻译和转录不因题材自动触发。"
 license: MIT
 metadata:
-  version: "1.12.0"
+  version: "1.12.1"
   author: Hermes Agent
   platforms: [linux, macos, windows, android]
   hermes:
@@ -86,15 +86,22 @@ Read `schema/AGENT_RULES.md` and the task-relevant contract when writing Agent-K
 | --- | --- | --- | --- |
 | `Hermes` | `hermes-mac` | macOS | `agentkb.hermesInstance` |
 | `Hermes` | `hermes-ubuntu-desktop` | Ubuntu | `agentkb.hermesInstance` |
+| `Hermes` | `hermes-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.hermesInstance` |
 | `Hermes` | `hermes-vivo-mobile` | Android | `agentkb.hermesInstance` |
 | `Codex` | `codex-mac` | macOS | `agentkb.codexInstance` |
 | `Codex` | `codex-ubuntu-desktop` | Ubuntu | `agentkb.codexInstance` |
+| `Codex` | `codex-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.codexInstance` |
 | `Claude` | `claude-code-mac` | macOS | `agentkb.claudeInstance` |
 | `Claude` | `claude-code-ubuntu-desktop` | Ubuntu | `agentkb.claudeInstance` |
+| `Claude` | `claude-code-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.claudeInstance` |
+| `Reasonix` | `reasonix-ubuntu-desktop` | Ubuntu | `agentkb.reasonixInstance` |
+| `Reasonix` | `reasonix-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.reasonixInstance` |
 | `Pi` | `pi-mac` | macOS | `agentkb.piInstance` |
 | `Pi` | `pi-ubuntu-desktop` | Ubuntu | `agentkb.piInstance` |
+| `Pi` | `pi-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.piInstance` |
 | `DeepSeekHarness` | `deepseek-harness-mac` | macOS | `agentkb.deepseekHarnessInstance` |
 | `DeepSeekHarness` | `deepseek-harness-ubuntu-desktop` | Ubuntu | `agentkb.deepseekHarnessInstance` |
+| `DeepSeekHarness` | `deepseek-harness-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.deepseekHarnessInstance` |
 | `DeepSeekHarness` | `deepseek-harness-android-mobile` | Android | `agentkb.deepseekHarnessInstance` |
 
 Bind an instance from inside the actual clone, then validate the canonical family name:
@@ -104,15 +111,18 @@ python3 ops/scripts/configure_agent_instance.py set <instance_id>
 python3 ops/scripts/configure_agent_instance.py check Hermes
 python3 ops/scripts/configure_agent_instance.py check Codex
 python3 ops/scripts/configure_agent_instance.py check Claude
+python3 ops/scripts/configure_agent_instance.py check Reasonix
 python3 ops/scripts/configure_agent_instance.py check Pi
 python3 ops/scripts/configure_agent_instance.py check DeepSeekHarness
 ```
 
+Ubuntu Desktop (main workstation) and Ubuntu AI Studio are two different machines: a clone on AI Studio binds only `*-ubuntu-ai-studio` instances and never an `*-ubuntu-desktop` one (`schema/agent_report_contract.md` §2).
+
 Claude Code uses the canonical family `Claude`, never `ClaudeCode`. Identity lives only in that clone's `.git/config`; a new clone must bind again. Do not infer identity from hostname, username, IP, or device serial.
 
-Pi uses the canonical family `Pi` and lowercase instance ids `pi-mac` / `pi-ubuntu-desktop`. The macOS and Ubuntu Pi are separate devices: each writes only its own instance directory and never writes for the other.
+Pi uses the canonical family `Pi` and lowercase instance ids `pi-mac` / `pi-ubuntu-desktop` / `pi-ubuntu-ai-studio`. Each Pi device is separate: each writes only its own instance directory and never writes for the other.
 
-DeepSeek Harness uses the canonical family `DeepSeekHarness` and lowercase instance ids `deepseek-harness-mac` / `deepseek-harness-ubuntu-desktop` / `deepseek-harness-android-mobile`. The three devices are separate: each writes only its own instance directory and never writes for the others.
+DeepSeek Harness uses the canonical family `DeepSeekHarness` and lowercase instance ids `deepseek-harness-mac` / `deepseek-harness-ubuntu-desktop` / `deepseek-harness-ubuntu-ai-studio` / `deepseek-harness-android-mobile`. The devices are separate: each writes only its own instance directory and never writes for the others.
 
 ### Durable report paths
 
