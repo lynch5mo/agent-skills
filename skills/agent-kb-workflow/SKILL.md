@@ -3,7 +3,7 @@ name: agent-kb-workflow
 description: "仅用于 canonical Agent-KB 中的查询、入库、对象学习、图谱策略或报告归档；普通书籍问答、阅读、翻译和转录不因题材自动触发。"
 license: MIT
 metadata:
-  version: "1.12.1"
+  version: "1.13.0"
   author: Hermes Agent
   platforms: [linux, macos, windows, android]
   hermes:
@@ -103,6 +103,10 @@ Read `schema/AGENT_RULES.md` and the task-relevant contract when writing Agent-K
 | `DeepSeekHarness` | `deepseek-harness-ubuntu-desktop` | Ubuntu | `agentkb.deepseekHarnessInstance` |
 | `DeepSeekHarness` | `deepseek-harness-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.deepseekHarnessInstance` |
 | `DeepSeekHarness` | `deepseek-harness-android-mobile` | Android | `agentkb.deepseekHarnessInstance` |
+| `Antigravity` | `antigravity-mac` | macOS | `agentkb.antigravityInstance` |
+| `Antigravity` | `antigravity-ubuntu-desktop` | Ubuntu Desktop | `agentkb.antigravityInstance` |
+| `Antigravity` | `antigravity-ubuntu-ai-studio` | Ubuntu AI Studio | `agentkb.antigravityInstance` |
+| `Antigravity` | `antigravity-omarchy` | Omarchy | `agentkb.antigravityInstance` |
 
 Bind an instance from inside the actual clone, then validate the canonical family name:
 
@@ -114,6 +118,7 @@ python3 ops/scripts/configure_agent_instance.py check Claude
 python3 ops/scripts/configure_agent_instance.py check Reasonix
 python3 ops/scripts/configure_agent_instance.py check Pi
 python3 ops/scripts/configure_agent_instance.py check DeepSeekHarness
+python3 ops/scripts/configure_agent_instance.py check Antigravity
 ```
 
 Ubuntu Desktop (main workstation) and Ubuntu AI Studio are two different machines: a clone on AI Studio binds only `*-ubuntu-ai-studio` instances and never an `*-ubuntu-desktop` one (`schema/agent_report_contract.md` §2).
@@ -123,6 +128,8 @@ Claude Code uses the canonical family `Claude`, never `ClaudeCode`. Identity liv
 Pi uses the canonical family `Pi` and lowercase instance ids `pi-mac` / `pi-ubuntu-desktop` / `pi-ubuntu-ai-studio`. Each Pi device is separate: each writes only its own instance directory and never writes for the other.
 
 DeepSeek Harness uses the canonical family `DeepSeekHarness` and lowercase instance ids `deepseek-harness-mac` / `deepseek-harness-ubuntu-desktop` / `deepseek-harness-ubuntu-ai-studio` / `deepseek-harness-android-mobile`. The devices are separate: each writes only its own instance directory and never writes for the others.
+
+Antigravity uses the canonical family `Antigravity` and lowercase instance ids `antigravity-mac` / `antigravity-ubuntu-desktop` / `antigravity-ubuntu-ai-studio` / `antigravity-omarchy`. The devices are separate: each writes only its own instance directory and never writes for the others. The family has no mobile instance.
 
 ### Durable report paths
 
@@ -143,21 +150,22 @@ When report commit and synchronization are authorized, use the safe closeout ent
 bash ops/scripts/agent_finish.sh <agent_family> TASK-<task-id> <summary-file.md>
 ```
 
-It validates identity, injects `agent-report-v1` frontmatter, stages only the summary and activity record, commits, and pushes. Existing staged work blocks closeout; unrelated unstaged work stays untouched. A failed push preserves the local commit and returns `sync_pending`.
+It validates identity and model declarations, injects `agent-report-v2` frontmatter, stages only the summary and activity record, commits, and pushes. At closeout, declare the actual model ID for this session with `AGENT_KB_MODEL` or a source frontmatter `model:` field; placeholders and missing models are rejected before any Git operation. Existing staged work blocks closeout; unrelated unstaged work stays untouched. A failed push preserves the local commit and returns `sync_pending`.
 
 If that entrypoint cannot run in the current sandbox, do not skip the record or the
 push — fall back to the report writer and close out by hand:
 
 ```bash
 python3 ops/scripts/agent_report.py write --root . --family <agent_family> \
-  --task-id TASK-<task-id> --source <body.md>
+  --task-id TASK-<task-id> --source <body.md> --model <actual-model-id>
 git add outputs/review/agent_task_summaries/<family>/<instance>/TASK-*.md \
         outputs/review/agent_activity/<family>/<instance>/*.md
 git commit -m "chore(kb-review): 记录 <task>" && git pull --rebase origin main && git push origin main
 ```
 
-`--source` is a plain body file; the script owns the frontmatter and the record date,
-and refuses to overwrite an existing report. Then verify the remote head:
+`--source` is a plain body file; the script owns the v2 frontmatter, identity banner,
+and record date, and refuses to overwrite an existing report. The model source may
+also be `AGENT_KB_MODEL` or a source frontmatter `model:`. Then verify the remote head:
 `git ls-remote origin main` must equal `git rev-parse HEAD`.
 
 Delivery is a separate gate from reporting. A task is not done while
