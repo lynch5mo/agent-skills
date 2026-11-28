@@ -1,6 +1,6 @@
 # lynch5mo Agent Skills
 
-这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 21 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
+这是 lynch5mo 全部自建 Agent Skill 的公开分发仓库。当前收录 22 个 Skill，分为核心业务、专项辅助、设备与运维三组。每个 Skill 都可以独立安装，适合 Codex、Claude Code、Hermes，以及能够从 GitHub 读取 `SKILL.md` 的其他 Agent。
 
 ## 核心业务 Skills
 
@@ -21,6 +21,7 @@
 | `pay-peng-video-transcription` | 付鹏系列音视频 Whisper 转写与 Markdown 整理 |
 | `pdf-to-markdown-conversion` | PDF 文本与图片转换为 Markdown |
 | `large-doc-chapter-split` | 超大 Markdown 文档的章节拆分、目录和交叉链接 |
+| `scanned-book-ocr` | 扫描书 OCR（MinerU）、页锚点 Markdown、分章与配图原位回填，图表留、照片装饰剔除 |
 | `boe-paper-download` | 英格兰银行 Quarterly Bulletin 和论文下载 |
 | `alpha-ficc-hermes-testing` | Alpha-FICC V1–V5、图表标注和 Research OS 专项验收 |
 | `fupeng-models-charting` | 付鹏核心研究模型的旧版直接数据绘图工作流 |

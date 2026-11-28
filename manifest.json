@@ -148,6 +148,13 @@
       "path": "skills/fupeng-models-charting",
       "entrypoint": "skills/fupeng-models-charting/SKILL.md",
       "package": "dist/fupeng-models-charting.skill"
+    },
+    {
+      "name": "scanned-book-ocr",
+      "version": "1.0.0",
+      "path": "skills/scanned-book-ocr",
+      "entrypoint": "skills/scanned-book-ocr/SKILL.md",
+      "package": "dist/scanned-book-ocr.skill"
     }
   ]
 }
