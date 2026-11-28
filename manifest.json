@@ -155,6 +155,13 @@
       "path": "skills/scanned-book-ocr",
       "entrypoint": "skills/scanned-book-ocr/SKILL.md",
       "package": "dist/scanned-book-ocr.skill"
+    },
+    {
+      "name": "teaching-video-explainer",
+      "version": "1.0.0",
+      "path": "skills/teaching-video-explainer",
+      "entrypoint": "skills/teaching-video-explainer/SKILL.md",
+      "package": "dist/teaching-video-explainer.skill"
     }
   ]
 }
